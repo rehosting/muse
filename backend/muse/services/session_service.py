@@ -9,12 +9,13 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from datetime import datetime
 
-from .. import artifacts, notify, pricing, stats, usage_cache
+from .. import artifacts, changes, notify, pricing, stats, usage_cache
 from ..annotations import AnnotationStore
 from ..config import get_settings
 from ..models import (
@@ -87,6 +88,15 @@ class SessionService:
         self._stats_ts = 0.0
         self._search_refresh_ts = 0.0
         self._brief_cache: dict[str, tuple[float, dict]] = {}
+        # Parse caches: the viewer page bursts 6–8 requests that all need the
+        # same parsed transcript (thread, events, file changes, brief, health
+        # sync). These mtime-keyed LRUs collapse that burst — and the background
+        # index ticks — to one parse per artifact. Entries are validated by
+        # (mtime, size) of the backing file, so a live append invalidates
+        # immediately. Oversized transcripts are served but never cached.
+        self._thread_cache: OrderedDict = OrderedDict()
+        self._events_cache: OrderedDict = OrderedDict()
+        self._parse_lock = threading.Lock()
 
     # --- read APIs -----------------------------------------------------------
     def list_sessions(self) -> list[SessionSummary]:
@@ -145,9 +155,60 @@ class SessionService:
         self._stats_ts = time.monotonic()
         return result
 
+    # --- parse caches ---------------------------------------------------------
+    _PARSE_CACHE_SLOTS = 6
+    _CACHE_MAX_BYTES = 300 * 1024 * 1024  # never hold a multi-GB session in RAM
+
+    def _change_key(self, session_id: str, agent_id: Optional[str]) -> Optional[tuple]:
+        """Cheap freshness key for a session's backing file: (mtime, size).
+        Claude stats the transcript directly; other providers fall back to the
+        cached summary (their files are small and list_sessions is SWR-fresh)."""
+        if ":" not in session_id:
+            paths = find_session(session_id)
+            if paths is None:
+                return None
+            f = paths.subagent_jsonl(agent_id) if agent_id else paths.jsonl
+            try:
+                st = f.stat()
+                return (st.st_mtime, st.st_size)
+            except OSError:
+                return None
+        s = next(
+            (x for x in (self._sessions_cache or []) if x.session_id == session_id),
+            None,
+        )
+        return (s.mtime.timestamp(), s.size_bytes) if s else None
+
+    def _parse_cached(
+        self,
+        cache: OrderedDict,
+        session_id: str,
+        agent_id: Optional[str],
+        build: Callable,
+    ):
+        key = (session_id, agent_id)
+        ck = self._change_key(session_id, agent_id)
+        with self._parse_lock:
+            hit = cache.get(key)
+            if hit is not None and ck is not None and hit[0] == ck:
+                cache.move_to_end(key)
+                return hit[1]
+        value = build()  # parse OUTSIDE the lock (don't serialize big parses)
+        if value is not None and ck is not None and ck[1] <= self._CACHE_MAX_BYTES:
+            with self._parse_lock:
+                cache[key] = (ck, value)
+                cache.move_to_end(key)
+                while len(cache) > self._PARSE_CACHE_SLOTS:
+                    cache.popitem(last=False)
+        return value
+
     def get_thread(self, session_id: str) -> Optional[Thread]:
-        thread = provider_for(session_id).load_thread(session_id)
+        thread = self._parse_cached(
+            self._thread_cache, session_id, None,
+            lambda: provider_for(session_id).load_thread(session_id),
+        )
         if thread:
+            # Applied on every call (not cached) so renames take effect instantly.
             custom = self.store.get_title(session_id)
             if custom:
                 thread.title = custom
@@ -193,7 +254,10 @@ class SessionService:
         self.store.delete_bookmark(session_id, message_uuid)
 
     def get_subagent(self, session_id: str, agent_id: str) -> Optional[Thread]:
-        return provider_for(session_id).load_subagent(session_id, agent_id)
+        return self._parse_cached(
+            self._thread_cache, session_id, agent_id,
+            lambda: provider_for(session_id).load_subagent(session_id, agent_id),
+        )
 
     # --- cross-session search -----------------------------------------------
     def refresh_search_index(self) -> None:
@@ -218,7 +282,15 @@ class SessionService:
                 return self.get_file_changes(session_id)
             except Exception:
                 return None
-        return self.file_index.sync(self.list_sessions(), _changes)
+        return self.file_index.sync(self._indexable_sessions(), _changes)
+
+    def _indexable_sessions(self) -> list[SessionSummary]:
+        """Sessions the background indexes may re-parse. Pathologically large
+        transcripts (multi-GB) are excluded — a tick must never spend minutes
+        pegging a core on one file (no badge/file-activity for those)."""
+        return [
+            s for s in self.list_sessions() if s.size_bytes <= self._CACHE_MAX_BYTES
+        ]
 
     def refresh_health_index(self) -> int:
         """Re-score failure patterns for sessions whose mtime advanced (rate-
@@ -228,11 +300,17 @@ class SessionService:
                 return self.get_events(session_id)
             except Exception:
                 return None
-        return self.health.sync(self.list_sessions(), _events)
+        return self.health.sync(self._indexable_sessions(), _events)
 
-    def get_session_health(self, session_id: str) -> Optional[dict]:
-        """Failure patterns for one session: computed fresh from the events (cheap
-        for a single session), falling back to the snapshot if it can't parse."""
+    def get_session_health(self, session_id: str, fresh: bool = False) -> Optional[dict]:
+        """Failure patterns for one session. Default: serve the snapshot (one
+        table read — the tick keeps it within ~5 min of live, plenty for a badge
+        bar). `fresh=True` recomputes from the (cached) events for MCP callers
+        that are about to cite the patterns."""
+        if not fresh:
+            snap = self.health.get(session_id)
+            if snap is not None:
+                return snap
         events = self.get_events(session_id)
         if events is not None:
             return detect_patterns(events)
@@ -320,11 +398,19 @@ class SessionService:
     def get_events(
         self, session_id: str, agent_id: Optional[str] = None
     ) -> Optional[list[SessionEvent]]:
-        return provider_for(session_id).build_events(session_id, agent_id)
+        return self._parse_cached(
+            self._events_cache, session_id, agent_id,
+            lambda: provider_for(session_id).build_events(session_id, agent_id),
+        )
 
     def get_file_changes(
         self, session_id: str, agent_id: Optional[str] = None
     ) -> Optional[list[FileChange]]:
+        # Claude main threads: derive from the (cached) thread instead of letting
+        # the provider re-parse the transcript a second time.
+        if ":" not in session_id and agent_id is None:
+            thread = self.get_thread(session_id)
+            return changes.build_file_changes(thread) if thread else None
         return provider_for(session_id).build_file_changes(session_id, agent_id)
 
     def get_lineage(self, session_id: str) -> Optional[SessionLineage]:
@@ -907,6 +993,8 @@ class SessionService:
         cached = self._brief_cache.get(session_id)
         if cached and mtime is not None and cached[0] == mtime:
             return cached[1]
+        if summary and summary.size_bytes > self._CACHE_MAX_BYTES:
+            return None  # pathological transcript — never parse it for a banner
 
         events = self.get_events(session_id)
         if events is None:

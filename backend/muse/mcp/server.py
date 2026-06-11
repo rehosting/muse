@@ -427,7 +427,7 @@ def build_mcp() -> FastMCP:
         permission-denial clusters, total error count, and an ok|warn|bad score.
         Anchors in the patterns are [step <id>] ids usable with get_step. Feed this
         into create_retrospective."""
-        health = await _to_thread(_svc().get_session_health, session_id)
+        health = await _to_thread(_svc().get_session_health, session_id, True)
         if health is None:
             return {"error": f"session not found: {session_id}"}
         return health
