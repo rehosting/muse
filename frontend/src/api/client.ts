@@ -8,9 +8,14 @@ import type {
   FileChange,
   Investigation,
   InvestigationSummary,
+  Journal,
+  Note,
+  NoteKind,
   NotifyConfig,
+  OpenLoop,
   NotifyResult,
   PersistedOutput,
+  ReentryBrief,
   SearchResponse,
   SessionBacklink,
   SessionEvent,
@@ -148,4 +153,34 @@ export const api = {
 
   getSessionReferences: (sessionId: string) =>
     getJSON<SessionBacklink[]>(`/api/sessions/${sessionId}/references`),
+
+  // --- worklog notes (lightweight running notes + journal) ---
+  listNotes: (filter: { sessionId?: string; day?: string; kind?: string } = {}) => {
+    const p = new URLSearchParams();
+    if (filter.sessionId) p.set("session_id", filter.sessionId);
+    if (filter.day) p.set("day", filter.day);
+    if (filter.kind) p.set("kind", filter.kind);
+    const qs = p.toString();
+    return getJSON<Note[]>(`/api/notes${qs ? `?${qs}` : ""}`);
+  },
+
+  createNote: (body: {
+    body: string;
+    session_id?: string | null;
+    anchor_uuid?: string | null;
+    kind?: NoteKind;
+  }) => sendJSON<Note>("POST", "/api/notes", body),
+
+  updateNote: (id: string, body: { body?: string; kind?: NoteKind }) =>
+    sendJSON<Note>("PUT", `/api/notes/${id}`, body),
+
+  deleteNote: (id: string) => sendJSON<{ ok: boolean }>("DELETE", `/api/notes/${id}`),
+
+  getJournal: (day: string) =>
+    getJSON<Journal>(`/api/journal/${day}`),
+
+  getReentryBrief: (sessionId: string) =>
+    getJSON<ReentryBrief>(`/api/sessions/${sessionId}/brief`),
+
+  getOpenLoops: () => getJSON<OpenLoop[]>("/api/open-loops"),
 };

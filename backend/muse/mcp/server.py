@@ -352,4 +352,54 @@ def build_mcp() -> FastMCP:
         return (f"# {inv.title}  ({inv.author}, {inv.status})\n\n{inv.body}\n\n"
                 f"References:\n{refs or '  (none)'}")
 
+    @mcp.tool()
+    async def get_reentry_brief(session_id: str) -> dict:
+        """'Where you left off' for a stale session: the last user goal, open
+        TodoWrite todos, errors since the last user turn, recently touched files,
+        worklog notes ('next' notes are open loops), investigation freshness, and
+        the resume command. Call this first when picking a session back up. After
+        reading, you may write an improved narrative brief back with
+        add_note(kind='brief') so the user sees it in the muse UI."""
+        brief = await _to_thread(_svc().build_reentry_brief, session_id)
+        if brief is None:
+            return {"error": f"session not found: {session_id}"}
+        return brief
+
+    # ---- worklog notes -------------------------------------------------
+    @mcp.tool()
+    async def add_note(
+        body: str,
+        session_id: Optional[str] = None,
+        anchor_uuid: Optional[str] = None,
+        kind: str = "note",
+    ) -> dict:
+        """Add a lightweight worklog note (much lighter than an investigation).
+        Optionally attach it to a session and a [step <id>] anchor. `kind` is one of
+        'note' (plain worklog entry), 'next' (an open loop / follow-up that surfaces
+        in the continue-working rail), or 'brief' (a narrative re-entry summary)."""
+        try:
+            note = await _to_thread(
+                _svc().create_note, body, session_id, anchor_uuid, kind, "ai"
+            )
+        except ValueError as e:
+            return {"error": str(e)}  # bad session/anchor id — fix and retry
+        return {"id": note.id, "kind": note.kind, "day": note.day,
+                "session_id": note.session_id}
+
+    @mcp.tool()
+    async def list_notes(
+        session_id: Optional[str] = None, day: Optional[str] = None
+    ) -> str:
+        """List worklog notes, newest first — filter by session_id and/or day
+        (YYYY-MM-DD). Notes record what the user was doing and what's next
+        ('next' notes are open loops; 'brief' notes are re-entry summaries)."""
+        notes = await _to_thread(_svc().list_notes, session_id, day)
+        if not notes:
+            return "(no notes)"
+        return "\n".join(
+            f"{n.id} | {n.day} | {n.kind} | {n.author} | "
+            f"{n.session_id or '-'}{('@' + n.anchor_uuid) if n.anchor_uuid else ''} | {n.body}"
+            for n in notes
+        )
+
     return mcp

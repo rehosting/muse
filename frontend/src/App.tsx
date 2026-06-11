@@ -23,6 +23,9 @@ export default function App() {
         <NavLink to="/investigations" className="nav-link">
           Investigations
         </NavLink>
+        <NavLink to="/journal" className="nav-link">
+          Journal
+        </NavLink>
         <NavLink to="/stats" className="nav-link">
           Stats
         </NavLink>

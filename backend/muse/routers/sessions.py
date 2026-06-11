@@ -131,6 +131,15 @@ def get_lineage(session_id: str, request: Request) -> SessionLineage:
     return lin
 
 
+@router.get("/sessions/{session_id}/brief")
+def get_reentry_brief(session_id: str, request: Request) -> dict:
+    """Deterministic 'where you left off' summary for re-entering a session."""
+    brief = _service(request).build_reentry_brief(session_id)
+    if brief is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return brief
+
+
 @router.get("/sessions/{session_id}/tokens", response_model=TokenUsage)
 def get_session_tokens(session_id: str, request: Request) -> TokenUsage:
     usage = _service(request).get_session_tokens(session_id)

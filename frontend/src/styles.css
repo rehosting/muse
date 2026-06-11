@@ -3581,6 +3581,279 @@ body.resizing {
   color: var(--accent);
 }
 
+/* Worklog notes bar (below backlinks in the session viewer) */
+.notes-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 14px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.notes-toggle {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+.notes-toggle:hover {
+  color: var(--text);
+}
+.notes-quick-add {
+  flex: 1;
+  min-width: 200px;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 8px;
+}
+.notes-quick-add:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.notes-list {
+  flex-basis: 100%;
+  list-style: none;
+  margin: 2px 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.note-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.note-row:hover {
+  background: var(--bg-elev2);
+}
+.note-row.note-next .note-body {
+  color: var(--accent);
+}
+.note-body {
+  flex: 1;
+  white-space: pre-wrap;
+}
+.note-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+  display: inline-flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+.note-ai {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.note-delete {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  visibility: hidden;
+}
+.note-row:hover .note-delete {
+  visibility: visible;
+}
+.note-delete:hover {
+  color: var(--err, #e66);
+}
+
+/* Re-entry banner: "where you left off" for stale sessions */
+.reentry-banner {
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  padding: 4px 14px 6px;
+  font-size: 12px;
+}
+.reentry-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.reentry-spacer {
+  flex: 1;
+}
+.reentry-dismiss {
+  visibility: visible;
+}
+.reentry-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+.reentry-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.reentry-row.reentry-goal {
+  cursor: pointer;
+}
+.reentry-label {
+  flex: 0 0 64px;
+  color: var(--text-dim);
+  font-weight: 600;
+  text-align: right;
+}
+.reentry-text {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.reentry-text.dim {
+  color: var(--text-dim);
+}
+.reentry-todo {
+  white-space: nowrap;
+}
+.reentry-todo.todo-in_progress {
+  color: var(--accent);
+}
+.reentry-err {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--err, #e66);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 5px;
+}
+
+/* "Continue working" rail (open loops) on the session list */
+.open-loops {
+  margin-bottom: 18px;
+}
+.open-loops-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+.loop-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-decoration: none;
+  color: var(--text);
+  font-size: 12px;
+}
+.loop-card:hover {
+  border-color: var(--accent);
+}
+.loop-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.loop-intent {
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.loop-next {
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.loop-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.loop-errs {
+  color: var(--err, #e66);
+}
+.loop-spacer {
+  flex: 1;
+}
+
+/* Journal page */
+.journal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.journal-head .list-heading {
+  margin: 0;
+  flex: 0 0 auto;
+}
+.journal-day {
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 3px 8px;
+  color-scheme: dark;
+}
+.journal-add {
+  width: 100%;
+  margin-bottom: 14px;
+  font-size: 13px;
+  padding: 7px 10px;
+  box-sizing: border-box;
+}
+.journal-section {
+  margin-bottom: 14px;
+}
+.journal-session-title {
+  font-size: 13px;
+  margin: 0 0 4px;
+}
+.journal-session-title a {
+  color: var(--text);
+  text-decoration: none;
+}
+.journal-session-title a:hover {
+  color: var(--accent);
+}
+.journal-session-title.dim {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.journal-quiet {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+.journal-quiet a {
+  color: var(--text);
+  text-decoration: none;
+}
+.journal-quiet a:hover {
+  color: var(--accent);
+}
+
 /* Per-session token count chip on the session list */
 .tok-chip {
   color: var(--tool);

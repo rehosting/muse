@@ -475,6 +475,25 @@ class SessionBacklink(BaseModel):
     ref: InvestigationRef
 
 
+# --- Worklog notes: lightweight running notes about active work ---------------
+# Much lighter than an Investigation: one timestamped line of prose, optionally
+# attached to a session/step, grouped by local day for the journal view.
+
+NoteKind = Literal["note", "next", "brief"]
+
+
+class Note(BaseModel):
+    id: str
+    session_id: Optional[str] = None  # None = global journal note
+    anchor_uuid: Optional[str] = None  # optional step anchor; deep-links via ?focus=
+    kind: NoteKind = "note"  # 'next' = open loop; 'brief' = AI re-entry summary
+    author: InvestigationAuthor = "user"
+    body: str
+    day: str  # local YYYY-MM-DD, for journal grouping
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
 class LiveSession(BaseModel):
     session_id: str
     pid: int

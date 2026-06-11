@@ -21,7 +21,7 @@ from .config import get_settings
 from .alerts import AlertsWatcher
 from .autopilot.controller import AutopilotController
 from .mcp import build_mcp, set_service
-from .routers import autopilot, investigations, notify, sessions, stream
+from .routers import autopilot, investigations, notify, sessions, stream, worklog
 from .services.events import EventBroker
 from .services.session_service import SessionService
 
@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI):
             app.state.service.search_index.close()
             app.state.service.notify_store.close()
             app.state.service.investigations.close()
+            app.state.service.worklog.close()
             await app.state.autopilot.stop()
             lifecycle.remove_pidfile()
 
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(autopilot.router)
     app.include_router(notify.router)
     app.include_router(investigations.router)
+    app.include_router(worklog.router)
 
     # MCP server (Streamable HTTP) on the same process → tool calls share state
     # with the web UI. The sub-app serves at /mcp/; redirect the canonical bare

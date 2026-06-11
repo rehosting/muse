@@ -25,6 +25,7 @@ from ..models import (
     Investigation,
     InvestigationRef,
     InvestigationSummary,
+    Note,
     NotifyConfig,
     NotifyResult,
     SearchHit,
@@ -49,6 +50,7 @@ from ..providers import provider_for, providers
 from ..search import SearchIndex
 from .events import EventBroker
 from ..tailer import TailerRegistry
+from ..worklog import WorklogStore
 
 # Short TTLs so repeated polls (multiple tabs/pollers) reuse one computation
 # instead of each re-scanning every transcript. The underlying scanners are
@@ -72,6 +74,7 @@ class SessionService:
         self.search_index = SearchIndex(get_settings().db_path)
         self.notify_store = NotifyStore(get_settings().db_path)
         self.investigations = InvestigationStore(get_settings().db_path)
+        self.worklog = WorklogStore(get_settings().db_path)
         self._sessions_cache: Optional[list[SessionSummary]] = None
         self._sessions_ts = 0.0
         self._sessions_lock = threading.Lock()
@@ -79,6 +82,7 @@ class SessionService:
         self._stats_cache: Optional[StatsResponse] = None
         self._stats_ts = 0.0
         self._search_refresh_ts = 0.0
+        self._brief_cache: dict[str, tuple[float, dict]] = {}
 
     # --- read APIs -----------------------------------------------------------
     def list_sessions(self) -> list[SessionSummary]:
@@ -733,6 +737,193 @@ class SessionService:
             "last_referenced_step": last,
             "steps_after": (total - 1 - last) if last is not None else None,
         }
+
+    # --- worklog notes (muse-owned; never ~/.claude) -------------------------
+    def create_note(
+        self,
+        body: str,
+        session_id: Optional[str] = None,
+        anchor_uuid: Optional[str] = None,
+        kind: str = "note",
+        author: str = "user",
+    ) -> Note:
+        if session_id or anchor_uuid:
+            if not session_id:
+                raise ValueError("anchor_uuid requires a session_id")
+            self._validate_refs([{"session_id": session_id, "anchor_uuid": anchor_uuid}])
+        if not (body or "").strip():
+            raise ValueError("note body is empty")
+        if session_id:
+            self._brief_cache.pop(session_id, None)  # notes feed the re-entry brief
+        return self.worklog.create_note(body.strip(), session_id, anchor_uuid, kind, author)
+
+    def list_notes(
+        self,
+        session_id: Optional[str] = None,
+        day: Optional[str] = None,
+        kind: Optional[str] = None,
+        limit: int = 200,
+    ) -> list[Note]:
+        return self.worklog.list_notes(session_id, day, kind, limit)
+
+    def update_note(
+        self, note_id: str, body: Optional[str] = None, kind: Optional[str] = None
+    ) -> Optional[Note]:
+        return self.worklog.update_note(note_id, body, kind)
+
+    def delete_note(self, note_id: str) -> bool:
+        return self.worklog.delete_note(note_id)
+
+    def get_journal(self, day: str) -> dict:
+        """One day of work: that day's notes interleaved with the sessions active
+        that day (by mtime, from the cached session list — no extra scanning)."""
+        notes = self.worklog.list_notes(day=day)
+        day_sessions = [
+            s for s in self.list_sessions()
+            if s.mtime.astimezone().strftime("%Y-%m-%d") == day
+        ]
+        return {"day": day, "notes": notes, "sessions": day_sessions}
+
+    # --- open loops ("continue working" rail) ---------------------------------
+    _OPEN_LOOPS_DAYS = 7
+    _OPEN_LOOPS_CAP = 12
+
+    def get_open_loops(self) -> list[dict]:
+        """Recently-active-but-unfinished sessions: waiting/stopped within the last
+        7 days, newest first, sessions carrying an unresolved 'next' note on top.
+        Each entry adds the last user intent + open-todo count from the (mtime-
+        memoized) re-entry brief, so the poll is cheap after the first hit."""
+        cutoff = time.time() - self._OPEN_LOOPS_DAYS * 86400
+        candidates = [
+            s for s in self.list_sessions()
+            if s.state in ("waiting", "stopped") and s.mtime.timestamp() >= cutoff
+        ]
+        flagged = self.worklog.sessions_with_open_next()
+        candidates.sort(
+            key=lambda s: (s.session_id in flagged, s.mtime.timestamp()), reverse=True
+        )
+        out = []
+        for s in candidates[: self._OPEN_LOOPS_CAP]:
+            brief = self.build_reentry_brief(s.session_id) or {}
+            out.append({
+                "summary": s,
+                "last_user_label": (brief.get("last_goal") or {}).get("text"),
+                "open_todo_count": len(brief.get("open_todos") or []),
+                "next_notes": brief.get("next_notes") or [],
+                "open_error_count": len(brief.get("open_errors") or []),
+            })
+        return out
+
+    # --- re-entry brief (deterministic "where you left off") -----------------
+    def build_reentry_brief(self, session_id: str) -> Optional[dict]:
+        """Everything needed to get back into a session, computed from data muse
+        already has (no AI call): the last user goal, the open TodoWrite todos,
+        recent files, errors since the last user turn, worklog notes, and staleness
+        of any investigations. Memoized by (session_id, file mtime)."""
+        summary = next(
+            (s for s in self.list_sessions() if s.session_id == session_id), None
+        )
+        mtime = summary.mtime.timestamp() if summary else None
+        cached = self._brief_cache.get(session_id)
+        if cached and mtime is not None and cached[0] == mtime:
+            return cached[1]
+
+        events = self.get_events(session_id)
+        if events is None:
+            return None
+
+        # Last real user turn (the goal being worked) + the assistant's last word.
+        last_user = next((e for e in reversed(events) if e.kind == "user"), None)
+        last_assistant = next(
+            (e for e in reversed(events) if e.kind == "assistant_text"), None
+        )
+
+        # Open todos from the most recent TodoWrite — the best free "next steps".
+        todos: list[dict] = []
+        todo_call = next(
+            (e for e in reversed(events)
+             if e.kind == "tool_call" and e.tool_name == "TodoWrite"),
+            None,
+        )
+        if todo_call and todo_call.tool_use_id:
+            tu = self._tool_index(session_id).get(todo_call.tool_use_id)
+            for t in ((tu.input or {}).get("todos") or []) if tu else []:
+                if isinstance(t, dict) and t.get("content"):
+                    todos.append({
+                        "content": t["content"],
+                        "status": t.get("status", "pending"),
+                    })
+        open_todos = [t for t in todos if t["status"] != "completed"]
+
+        # Errors after the last user turn (still-unresolved failures).
+        user_idx = last_user.index if last_user else -1
+        open_errors = [
+            {"label": e.label, "detail": (e.detail or "")[:300],
+             "anchor_uuid": e.anchor_uuid or e.tool_use_id}
+            for e in events
+            if e.index > user_idx
+            and (e.is_error or (e.kind == "system" and e.level == "error"))
+        ][-5:]
+
+        # Most recently touched files.
+        changes = self.get_file_changes(session_id) or []
+        changes.sort(
+            key=lambda c: c.last_ts.timestamp() if c.last_ts else 0.0, reverse=True
+        )
+        files = [
+            {"path": c.path, "reads": c.read_count, "edits": c.edit_count,
+             "writes": c.write_count,
+             "last_ts": c.last_ts.isoformat() if c.last_ts else None}
+            for c in changes[:5]
+        ]
+
+        notes = self.worklog.list_notes(session_id=session_id, limit=10)
+        latest_brief = next((n for n in notes if n.kind == "brief"), None)
+        next_notes = [n for n in notes if n.kind == "next"]
+
+        brief = {
+            "session_id": session_id,
+            "title": summary.title if summary else None,
+            "provider": summary.provider if summary else None,
+            "project_cwd": summary.project_cwd if summary else None,
+            "state": summary.state if summary else None,
+            "mtime": summary.mtime.isoformat() if summary else None,
+            "idle_seconds": (
+                max(0, int(time.time() - mtime)) if mtime is not None else None
+            ),
+            "last_goal": (
+                {"text": (last_user.detail or last_user.label or "")[:600],
+                 "anchor_uuid": last_user.anchor_uuid}
+                if last_user else None
+            ),
+            "last_assistant": (
+                {"text": (last_assistant.detail or last_assistant.label or "")[:600],
+                 "anchor_uuid": last_assistant.anchor_uuid}
+                if last_assistant else None
+            ),
+            "open_todos": open_todos,
+            "done_todos": len(todos) - len(open_todos),
+            "open_errors": open_errors,
+            "files": files,
+            "next_notes": [
+                {"id": n.id, "body": n.body, "created_at": n.created_at}
+                for n in next_notes
+            ],
+            "latest_ai_brief": (
+                {"id": latest_brief.id, "body": latest_brief.body,
+                 "created_at": latest_brief.created_at}
+                if latest_brief else None
+            ),
+            "note_count": len(notes),
+            "reference_freshness": self.reference_freshness(session_id),
+            "resume_command": (
+                f"claude --resume {session_id}"
+                if summary and summary.provider == "claude" else None
+            ),
+        }
+        if mtime is not None:
+            self._brief_cache[session_id] = (mtime, brief)
+        return brief
 
     def get_session_artifacts(self, session_id: str) -> Optional[dict]:
         """The session's working-dir notes (NOTES.md, *.md) and durable memory files

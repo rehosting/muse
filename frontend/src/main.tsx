@@ -11,6 +11,7 @@ import AutopilotPage from "./pages/AutopilotPage";
 import AlertsPage from "./pages/AlertsPage";
 import InvestigationsPage from "./pages/InvestigationsPage";
 import InvestigationView from "./pages/InvestigationView";
+import JournalPage from "./pages/JournalPage";
 import "./styles.css";
 
 const router = createBrowserRouter([
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
       { path: "alerts", element: <AlertsPage /> },
       { path: "investigations", element: <InvestigationsPage /> },
       { path: "investigations/:id", element: <InvestigationView /> },
+      { path: "journal", element: <JournalPage /> },
       { path: "stats", element: <StatsPage /> },
       { path: "sessions/:sessionId", element: <SessionViewPage /> },
     ],

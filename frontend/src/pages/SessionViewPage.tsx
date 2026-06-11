@@ -18,6 +18,8 @@ import ToolDetail from "../components/ToolDetail";
 import ToolDetailPanel from "../components/ToolDetailPanel";
 import ViewerHeader, { type LayoutMode } from "../components/ViewerHeader";
 import SessionBacklinks from "../components/SessionBacklinks";
+import NotesPanel from "../components/NotesPanel";
+import ReentryBanner from "../components/ReentryBanner";
 import { type SubNode } from "../components/SubagentTree";
 import ResizableSplit from "../components/ResizableSplit";
 import { useSessionStream } from "../hooks/useSessionStream";
@@ -487,16 +489,40 @@ export default function SessionViewPage() {
       />
 
       {sessionId && agentStack.length === 0 && (
-        <SessionBacklinks
-          sessionId={sessionId}
-          onFocus={(uuid) => {
-            if (toolsById.has(uuid)) selectTool(uuid, "log");
-            else
-              convItemRefs.current
-                .get(uuid)
-                ?.scrollIntoView({ block: "center", behavior: "smooth" });
-          }}
-        />
+        <>
+          <SessionBacklinks
+            sessionId={sessionId}
+            onFocus={(uuid) => {
+              if (toolsById.has(uuid)) selectTool(uuid, "log");
+              else
+                convItemRefs.current
+                  .get(uuid)
+                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }}
+          />
+          <NotesPanel
+            sessionId={sessionId}
+            onFocus={(uuid) => {
+              if (toolsById.has(uuid)) selectTool(uuid, "log");
+              else
+                convItemRefs.current
+                  .get(uuid)
+                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }}
+          />
+          <ReentryBanner
+            sessionId={sessionId}
+            provider={current.provider}
+            cwd={current.project_cwd}
+            onFocus={(uuid) => {
+              if (toolsById.has(uuid)) selectTool(uuid, "log");
+              else
+                convItemRefs.current
+                  .get(uuid)
+                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }}
+          />
+        </>
       )}
 
       <div className="panels">

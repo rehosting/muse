@@ -5,6 +5,7 @@ import type { SessionSummary } from "../api/types";
 import LiveBadge from "../components/LiveBadge";
 import ResumeButton from "../components/ResumeButton";
 import ExportMdButton from "../components/ExportMdButton";
+import OpenLoopsRail from "../components/OpenLoopsRail";
 import { formatBytes, formatTokens, relativeTime, shortModel } from "../util/format";
 import { usePolling } from "../hooks/usePolling";
 
@@ -50,6 +51,7 @@ export default function SessionListPage() {
   // Backend returns sessions sorted by mtime desc; keep that flat time order.
   return (
     <div className="list-wrap">
+      <OpenLoopsRail />
       <h2 className="list-heading">All sessions · most recent first</h2>
       {sessions.map((s) => (
         <Link to={`/sessions/${s.session_id}`} className="session-card" key={s.session_id}>

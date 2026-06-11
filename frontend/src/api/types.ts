@@ -310,6 +310,55 @@ export interface SessionBacklink {
   ref: InvestigationRef;
 }
 
+export type NoteKind = "note" | "next" | "brief";
+
+export interface Note {
+  id: string;
+  session_id: string | null;
+  anchor_uuid: string | null;
+  kind: NoteKind;
+  author: InvestigationAuthor;
+  body: string;
+  day: string; // local YYYY-MM-DD
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ReentryBrief {
+  session_id: string;
+  title: string | null;
+  provider: string | null;
+  project_cwd: string | null;
+  state: "live" | "waiting" | "stopped" | null;
+  mtime: string | null;
+  idle_seconds: number | null;
+  last_goal: { text: string; anchor_uuid: string | null } | null;
+  last_assistant: { text: string; anchor_uuid: string | null } | null;
+  open_todos: { content: string; status: string }[];
+  done_todos: number;
+  open_errors: { label: string; detail: string; anchor_uuid: string | null }[];
+  files: { path: string; reads: number; edits: number; writes: number; last_ts: string | null }[];
+  next_notes: { id: string; body: string; created_at: string | null }[];
+  latest_ai_brief: { id: string; body: string; created_at: string | null } | null;
+  note_count: number;
+  reference_freshness: Record<string, unknown> | null;
+  resume_command: string | null;
+}
+
+export interface Journal {
+  day: string;
+  notes: Note[];
+  sessions: SessionSummary[];
+}
+
+export interface OpenLoop {
+  summary: SessionSummary;
+  last_user_label: string | null;
+  open_todo_count: number;
+  next_notes: { id: string; body: string; created_at: string | null }[];
+  open_error_count: number;
+}
+
 export interface LiveSession {
   session_id: string;
   pid: number;
