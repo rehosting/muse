@@ -164,8 +164,8 @@ export async function fetchSubagentTree(
   return map;
 }
 
-export function downloadMarkdown(filename: string, content: string): void {
-  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+export function downloadBlob(filename: string, content: string, mime: string): void {
+  const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -174,4 +174,8 @@ export function downloadMarkdown(filename: string, content: string): void {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+export function downloadMarkdown(filename: string, content: string): void {
+  downloadBlob(filename, content, "text/markdown;charset=utf-8");
 }

@@ -44,6 +44,17 @@ def pane_exists(pane_id: str) -> bool:
     return any(p["pane_id"] == pane_id for p in list_panes())
 
 
+def new_window(cwd: str, command: str) -> tuple[bool, str]:
+    """Open a new tmux window running `command` (a shell string) in `cwd`.
+    Returns (ok, pane_id | error)."""
+    code, out, err = _run(
+        ["new-window", "-c", cwd, "-P", "-F", "#{pane_id}", command]
+    )
+    if code != 0:
+        return False, err or "tmux new-window failed"
+    return True, out.strip()
+
+
 def send_text(pane_id: str, text: str, submit: bool = True) -> tuple[bool, str]:
     """Type `text` into a pane (literal), then optionally press Enter to submit."""
     if not pane_id:

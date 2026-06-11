@@ -9,6 +9,15 @@ export function initTheme(): void {
   document.documentElement.dataset.theme = saved === "light" ? "light" : "dark";
 }
 
+/** Flip the theme from anywhere (e.g. the ⌘K palette); the navbar button
+ * stays in sync via the muse:theme event. */
+export function toggleTheme(): void {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem(KEY, next);
+  window.dispatchEvent(new Event("muse:theme"));
+}
+
 /** ☀/🌙 switch in the navbar. The conversation reconstruction stays terminal-
  * dark in both themes (it's an embedded Claude Code pane). */
 export default function ThemeToggle() {
@@ -20,6 +29,13 @@ export default function ThemeToggle() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(KEY, theme);
   }, [theme]);
+
+  // Stay in sync when something else (the ⌘K palette) toggles the theme.
+  useEffect(() => {
+    const sync = () => setTheme(document.documentElement.dataset.theme ?? "dark");
+    window.addEventListener("muse:theme", sync);
+    return () => window.removeEventListener("muse:theme", sync);
+  }, []);
 
   return (
     <button

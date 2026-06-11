@@ -414,6 +414,22 @@ export interface RelatedSession {
   same_branch: boolean;
 }
 
+export interface Pack {
+  id: string;
+  title: string;
+  source_session_id: string | null;
+  body_md: string;
+  path: string;
+  created_at: string | null;
+}
+
+export interface LaunchResult {
+  ok: boolean;
+  pane_id?: string | null;
+  error?: string | null;
+  command: string;
+}
+
 export interface OpenLoop {
   summary: SessionSummary;
   last_user_label: string | null;

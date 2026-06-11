@@ -50,9 +50,11 @@ from ..paths import find_session
 from ..providers import provider_for, providers
 from ..search import SearchIndex
 from .events import EventBroker
+from ..autopilot import tmux
 from ..tailer import TailerRegistry
 from ..file_index import FileIndex
 from ..patterns import HealthStore, detect_patterns
+from ..packs import PackStore
 from ..usage_history import UsageHistoryStore
 from ..worklog import WorklogStore
 
@@ -82,6 +84,9 @@ class SessionService:
         self.file_index = FileIndex(get_settings().db_path)
         self.health = HealthStore(get_settings().db_path)
         self.usage_history = UsageHistoryStore(get_settings().db_path)
+        self.packs = PackStore(
+            get_settings().db_path, get_settings().db_path.parent / "packs"
+        )
         self._sessions_cache: Optional[list[SessionSummary]] = None
         self._sessions_ts = 0.0
         self._sessions_lock = threading.Lock()
@@ -991,6 +996,108 @@ class SessionService:
                 "open_error_count": len(brief.get("open_errors") or []),
             })
         return out
+
+    # --- context packs + launcher ---------------------------------------------
+    def create_pack(
+        self,
+        source_session_id: Optional[str] = None,
+        include_brief: bool = True,
+        note_ids: Optional[list[str]] = None,
+        include_files: bool = True,
+        extra_md: str = "",
+        title: str = "",
+    ):
+        """Render a hand-off markdown pack from what muse already knows about a
+        session and persist it under ~/.muse/packs/ (never the project dir)."""
+        parts: list[str] = []
+        src_title = None
+        if source_session_id:
+            summary = next(
+                (s for s in self.list_sessions() if s.session_id == source_session_id),
+                None,
+            )
+            src_title = summary.title if summary else source_session_id
+            parts.append(
+                f"# Context from previous session: {src_title}\n\n"
+                f"(session `{source_session_id}`"
+                + (f", project `{summary.project_cwd}`" if summary and summary.project_cwd else "")
+                + ")"
+            )
+            if include_brief:
+                brief = self.build_reentry_brief(source_session_id) or {}
+                lines = ["## Where it left off"]
+                if brief.get("last_goal"):
+                    lines.append(f"**Last goal:** {brief['last_goal']['text']}")
+                if brief.get("last_assistant"):
+                    lines.append(f"**Last assistant word:** {brief['last_assistant']['text']}")
+                for t in brief.get("open_todos") or []:
+                    lines.append(f"- [ ] {t['content']} ({t['status']})")
+                for err in brief.get("open_errors") or []:
+                    lines.append(f"- ⚠ {err['label']}: {err['detail']}")
+                if len(lines) > 1:
+                    parts.append("\n".join(lines))
+            if note_ids:
+                notes = [
+                    n for n in self.worklog.list_notes(session_id=source_session_id, limit=500)
+                    if n.id in set(note_ids)
+                ]
+                if notes:
+                    parts.append(
+                        "## Worklog notes\n"
+                        + "\n".join(f"- [{n.kind}] {n.body}" for n in notes)
+                    )
+            if include_files:
+                changes_ = self.get_file_changes(source_session_id) or []
+                if changes_:
+                    parts.append(
+                        "## Files that session touched\n"
+                        + "\n".join(
+                            f"- `{c.path}` ({c.read_count}r/{c.edit_count}e/{c.write_count}w)"
+                            for c in changes_[:15]
+                        )
+                    )
+        if extra_md.strip():
+            parts.append(extra_md.strip())
+        body = "\n\n".join(parts) or "(empty pack)"
+        return self.packs.create(
+            title or (f"Pack: {src_title}" if src_title else "Context pack"),
+            body,
+            source_session_id,
+        )
+
+    def launch_session(
+        self, cwd: str, prompt: str, pack_id: Optional[str] = None
+    ) -> dict:
+        """Launch a NEW Claude Code session: tmux window when available, and in
+        every case return the equivalent shell command for clipboard fallback."""
+        import shlex
+
+        full_prompt = prompt.strip()
+        if pack_id:
+            pack = self.packs.get(pack_id)
+            if pack is None:
+                return {"ok": False, "error": f"pack not found: {pack_id}", "command": ""}
+            preamble = f"Read {pack.path} for context from my previous session"
+            full_prompt = f"{preamble}, then: {full_prompt}" if full_prompt else preamble
+        argv = ["claude", full_prompt] if full_prompt else ["claude"]
+        command = f"cd {shlex.quote(cwd)} && {shlex.join(argv)}"
+        if not tmux.available():
+            return {"ok": False, "error": "tmux not available", "command": command}
+        ok, result = tmux.new_window(cwd, shlex.join(argv))
+        return {
+            "ok": ok,
+            "pane_id": result if ok else None,
+            "error": None if ok else result,
+            "command": command,
+        }
+
+    def launch_targets(self) -> list[str]:
+        """Known project cwds (most recently active first) for the launch picker."""
+        seen: list[str] = []
+        for s in self.list_sessions():
+            if s.project_cwd and s.project_cwd not in seen:
+                seen.append(s.project_cwd)
+        return seen[:40]
 
     # --- re-entry brief (deterministic "where you left off") -----------------
     def build_reentry_brief(self, session_id: str) -> Optional[dict]:

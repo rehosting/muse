@@ -4147,6 +4147,18 @@ body.resizing {
   font-family: var(--mono, monospace);
 }
 
+.cmdk-section {
+  padding: 6px 14px 2px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.cmdk-cmd-icon {
+  color: var(--accent);
+  margin-right: 6px;
+}
 .cmdk-loose {
   padding: 4px 14px;
   color: var(--text-dim);
@@ -4208,6 +4220,117 @@ body.resizing {
   font-size: 12px;
   padding: 2px 10px;
   margin-bottom: 8px;
+}
+.new-session-btn {
+  margin-left: auto;
+  margin-bottom: 8px;
+}
+
+/* Launch modal (new session + context pack) */
+.launch-modal {
+  position: fixed;
+  top: 12vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  width: min(620px, calc(100vw - 40px));
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-pop);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.launch-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.launch-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+.launch-field {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+.launch-prompt {
+  font-family: inherit;
+  resize: vertical;
+}
+.launch-pack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 6px;
+}
+.launch-note {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+.launch-result {
+  color: var(--accent);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.launch-command {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 6px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 4px 0 0;
+}
+.launch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* Export dropdown */
+.export-menu {
+  position: relative;
+  display: inline-flex;
+}
+.export-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 60;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  overflow: hidden;
+}
+.export-opt {
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 8px 12px;
+  text-align: left;
+}
+.export-opt:hover {
+  background: var(--bg-elev2);
+  color: var(--accent);
 }
 
 /* Session health (failure-pattern) badges */

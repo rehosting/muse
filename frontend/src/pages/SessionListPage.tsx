@@ -80,6 +80,12 @@ export default function SessionListPage() {
         <h2 className="list-heading">
           {branch || project ? `${filtered.length} sessions` : "All sessions · most recent first"}
         </h2>
+        <button
+          className="action-btn primary new-session-btn"
+          onClick={() => window.dispatchEvent(new CustomEvent("muse:launch", { detail: {} }))}
+        >
+          ✻ New session
+        </button>
         {branch && (
           <button className="filter-chip" onClick={() => setFilter("branch", null)}>
             ⎇ {branch} ✕

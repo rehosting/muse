@@ -11,11 +11,13 @@ import type {
   Investigation,
   InvestigationSummary,
   Journal,
+  LaunchResult,
   Note,
   NoteKind,
   NotifyConfig,
   OpenLoop,
   NotifyResult,
+  Pack,
   PersistedOutput,
   ReentryBrief,
   RelatedSession,
@@ -200,4 +202,19 @@ export const api = {
 
   getSessionHealth: (sessionId: string) =>
     getJSON<SessionHealth>(`/api/sessions/${sessionId}/health`),
+
+  // --- launcher + context packs ---
+  createPack: (body: {
+    source_session_id?: string | null;
+    include_brief?: boolean;
+    note_ids?: string[];
+    include_files?: boolean;
+    extra_md?: string;
+    title?: string;
+  }) => sendJSON<Pack>("POST", "/api/packs", body),
+
+  launchSession: (body: { cwd: string; prompt?: string; pack_id?: string | null }) =>
+    sendJSON<LaunchResult>("POST", "/api/launch", body),
+
+  getLaunchTargets: () => getJSON<string[]>("/api/launch/targets"),
 };

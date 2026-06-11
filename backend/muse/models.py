@@ -234,6 +234,18 @@ class WindowStat(BaseModel):
     budget_usd: Optional[float] = None
 
 
+class Pack(BaseModel):
+    """A context pack: hand-off markdown written to ~/.muse/packs/<id>.md that a
+    newly launched session reads (the seed prompt names the absolute path)."""
+
+    id: str
+    title: str
+    source_session_id: Optional[str] = None
+    body_md: str
+    path: str
+    created_at: Optional[str] = None
+
+
 class AgentTypeStat(BaseModel):
     """Spend split by subagent type ('main thread' = the top-level session)."""
 

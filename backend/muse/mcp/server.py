@@ -445,6 +445,24 @@ def build_mcp() -> FastMCP:
             return {"error": f"session not found: {session_id}"}
         return brief
 
+    @mcp.tool()
+    async def create_context_pack(
+        session_id: str,
+        include_brief: bool = True,
+        include_files: bool = True,
+        extra_md: str = "",
+        title: str = "",
+    ) -> dict:
+        """Author a hand-off context pack for a SUCCESSOR session: muse renders
+        the re-entry brief + touched files (plus your `extra_md` — put the
+        narrative hand-off there) to a markdown file under ~/.muse/packs/.
+        Returns the absolute path; a new session can be told to read it."""
+        pack = await _to_thread(
+            _svc().create_pack, session_id, include_brief, None,
+            include_files, extra_md, title,
+        )
+        return {"id": pack.id, "path": pack.path, "title": pack.title}
+
     # ---- worklog notes -------------------------------------------------
     @mcp.tool()
     async def add_note(

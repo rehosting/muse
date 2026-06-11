@@ -1,15 +1,9 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
 import type { SessionLineage, Thread } from "../api/types";
 import { formatTokens, shortModel } from "../util/format";
 import { sessionStats } from "../util/stats";
-import {
-  downloadMarkdown,
-  fetchSubagentTree,
-  sessionTreeToMarkdown,
-  threadToMarkdown,
-} from "../util/exportMarkdown";
+import ExportMenu from "./ExportMdButton";
 import Breadcrumb, { type Crumb } from "./Breadcrumb";
 import ContextMeter from "./ContextMeter";
 import ResumeButton from "./ResumeButton";
@@ -62,30 +56,7 @@ export default function ViewerHeader({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [treeOpen, setTreeOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const inSubagent = activePath.length > 0;
-
-  // Export the whole SESSION (root + every subagent) as one cogent Markdown doc,
-  // each subagent inlined at its spawn step. Always exports from the root even when
-  // a subagent view is open (subagents share the parent session_id).
-  const exportMd = async () => {
-    setExporting(true);
-    try {
-      const main = current.agent_id ? await api.getThread(current.session_id) : current;
-      const slug = (main.title || main.session_id)
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 60);
-      const subagents = await fetchSubagentTree(main.session_id, main, api.getSubagent);
-      const md = subagents.size
-        ? sessionTreeToMarkdown(main, subagents)
-        : threadToMarkdown(main);
-      downloadMarkdown(`${slug || main.session_id}.md`, md);
-    } finally {
-      setExporting(false);
-    }
-  };
   return (
     <header className="viewer-header">
       <div className="viewer-header-top">
@@ -220,22 +191,29 @@ export default function ViewerHeader({
           {current.provider !== "codex" && current.provider !== "opencode" && (
             <ResumeButton cwd={current.project_cwd} sessionId={current.session_id} />
           )}
-          <button
-            className="action-btn"
-            title={
-              subagentCount > 0
-                ? "Export the session + all its subagents as one Markdown file"
-                : "Export this conversation as Markdown"
-            }
-            onClick={exportMd}
-            disabled={exporting}
-          >
-            {exporting
-              ? "…"
-              : subagentCount > 0
-                ? `↓ Export MD (+${subagentCount} subagents)`
-                : "↓ Export MD"}
-          </button>
+          {current.provider === "claude" && (
+            <button
+              className="action-btn"
+              title="Start a fresh session seeded with this one's context (brief / notes / files)"
+              onClick={() =>
+                window.dispatchEvent(
+                  new CustomEvent("muse:launch", {
+                    detail: {
+                      sourceSessionId: current.session_id,
+                      cwd: current.project_cwd ?? undefined,
+                    },
+                  }),
+                )
+              }
+            >
+              ✻ Continue in new session
+            </button>
+          )}
+          <ExportMenu
+            sessionId={current.session_id}
+            title={current.title}
+            label={subagentCount > 0 ? `↓ Export (+${subagentCount} subagents)` : "↓ Export"}
+          />
         </div>
 
         <div className="layout-switch" role="group" aria-label="Layout mode">

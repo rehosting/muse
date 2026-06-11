@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import CommandPalette from "./components/CommandPalette";
+import LaunchModal from "./components/LaunchModal";
 import ThemeToggle from "./components/ThemeToggle";
 
 export default function App() {
@@ -46,6 +47,7 @@ export default function App() {
         <Outlet />
       </main>
       <CommandPalette />
+      <LaunchModal />
     </div>
   );
 }
