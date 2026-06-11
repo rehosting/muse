@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { SessionSummary } from "../api/types";
 import LiveBadge from "../components/LiveBadge";
@@ -22,12 +22,30 @@ const NO_RESUME = new Set(["codex", "opencode"]);
 export default function SessionListPage() {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const branch = params.get("branch");
+  const project = params.get("project");
 
   const load = useCallback(
     () => api.listSessions().then(setSessions).catch((e) => setError(String(e))),
     [],
   );
   usePolling(load, 6000);
+
+  // Branch/project chips on the cards toggle these URL-param filters.
+  const setFilter = (key: "branch" | "project", value: string | null) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setParams(next, { replace: true });
+  };
+  const chipFilter =
+    (key: "branch" | "project", value: string) =>
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setFilter(key, value);
+    };
 
   if (error)
     return (
@@ -48,12 +66,32 @@ export default function SessionListPage() {
       </div>
     );
 
+  const filtered = sessions.filter(
+    (s) =>
+      (!branch || s.git_branch === branch) &&
+      (!project || (s.project_cwd ?? s.project_dir) === project),
+  );
+
   // Backend returns sessions sorted by mtime desc; keep that flat time order.
   return (
     <div className="list-wrap">
-      <OpenLoopsRail />
-      <h2 className="list-heading">All sessions · most recent first</h2>
-      {sessions.map((s) => (
+      {!branch && !project && <OpenLoopsRail />}
+      <div className="list-head-row">
+        <h2 className="list-heading">
+          {branch || project ? `${filtered.length} sessions` : "All sessions · most recent first"}
+        </h2>
+        {branch && (
+          <button className="filter-chip" onClick={() => setFilter("branch", null)}>
+            ⎇ {branch} ✕
+          </button>
+        )}
+        {project && (
+          <button className="filter-chip" onClick={() => setFilter("project", null)}>
+            📁 {project.split("/").pop()} ✕
+          </button>
+        )}
+      </div>
+      {filtered.map((s) => (
         <Link to={`/sessions/${s.session_id}`} className="session-card" key={s.session_id}>
           <div className="session-card-top">
             <span className={`provider-badge provider-${s.provider}`}>
@@ -75,7 +113,13 @@ export default function SessionListPage() {
             )}
           </div>
           <div className="session-meta">
-            <span className="chip project-chip">{s.project_cwd ?? s.project_dir}</span>
+            <button
+              className="chip project-chip chip-btn"
+              title="Filter by this project"
+              onClick={chipFilter("project", s.project_cwd ?? s.project_dir)}
+            >
+              {s.project_cwd ?? s.project_dir}
+            </button>
             <span>{relativeTime(s.mtime)}</span>
             <span>{s.message_count} msgs</span>
             {s.total_tokens > 0 && (
@@ -85,11 +129,22 @@ export default function SessionListPage() {
             )}
             {s.subagent_count > 0 && <span>{s.subagent_count} subagents</span>}
             {s.model && <span className="chip">{shortModel(s.model)}</span>}
-            {s.git_branch && <span className="chip">{s.git_branch}</span>}
+            {s.git_branch && (
+              <button
+                className="chip chip-btn"
+                title="Filter by this branch (as recorded at session start)"
+                onClick={chipFilter("branch", s.git_branch)}
+              >
+                ⎇ {s.git_branch}
+              </button>
+            )}
             <span>{formatBytes(s.size_bytes)}</span>
           </div>
         </Link>
       ))}
+      {filtered.length === 0 && (
+        <div className="empty">No sessions match the active filter.</div>
+      )}
     </div>
   );
 }

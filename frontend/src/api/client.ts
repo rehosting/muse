@@ -52,7 +52,7 @@ async function sendJSON<T>(method: string, url: string, body?: unknown): Promise
 export const api = {
   listSessions: () => getJSON<SessionSummary[]>("/api/sessions"),
 
-  getStats: () => getJSON<StatsResponse>("/api/stats"),
+  getStats: (days = 0) => getJSON<StatsResponse>(`/api/stats?days=${days}`),
 
   search: (q: string, limit = 30, signal?: AbortSignal) =>
     getJSON<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`, signal),

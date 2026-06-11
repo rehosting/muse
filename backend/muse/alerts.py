@@ -18,7 +18,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import db, usage_cache
+from . import db
 from .incremental import new_objects
 from .models import AlertEvent
 from .paths import SessionPaths
@@ -116,12 +116,13 @@ class AlertsWatcher:
             await asyncio.to_thread(self.service.refresh_health_index)
         except Exception:
             pass
-        # Keep the usage cache warm so /api/stats never pays the cold full-corpus
-        # parse on the request path (post-restart it costs ~20s ONCE, here).
+        # Keep the usage cache warm (so /api/stats never pays the cold full-corpus
+        # parse on the request path) AND roll per-day usage into the persistent
+        # history table so long-range stats survive transcript deletion.
         if time.monotonic() - self._last_usage_warm >= _USAGE_WARM_INTERVAL:
             self._last_usage_warm = time.monotonic()
             try:
-                await asyncio.to_thread(usage_cache.scan_all)
+                await asyncio.to_thread(self.service.roll_usage_history)
             except Exception:
                 pass
         # Periodically truncate the shared WAL so it can't balloon (it once hit 462MB).

@@ -37,6 +37,9 @@ class AutopilotController:
         self._stop = asyncio.Event()
         self._cache: Optional[AutopilotState] = None
         self._cache_ts = 0.0
+        # Optional observer for parsed usage-limit reset times (wired to the
+        # usage-history store in main.py so stats can anchor the 5h window).
+        self.on_reset = None
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -198,6 +201,11 @@ class AutopilotController:
             pane = tmux.capture_pane(ls.pane_id, 40)
             if _RATE_LIMIT_RE.search(pane):
                 reset = parse_reset_time(pane, now)
+                if reset and self.on_reset:
+                    try:
+                        self.on_reset(reset)  # anchor stats' 5h window
+                    except Exception:
+                        pass
                 until = reset if (reset and reset > now) else now + timedelta(seconds=cfg.backoff_seconds)
                 self.store.set_backoff(sid, until)
                 when = until.astimezone().strftime("%a %H:%M")

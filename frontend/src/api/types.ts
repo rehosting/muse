@@ -134,6 +134,7 @@ export interface WindowStat {
   label: string;
   window_seconds: number;
   anchor: string | null;
+  anchor_source: "reset" | "estimated";
   elapsed_seconds: number;
   remaining_seconds: number;
   input_tokens: number;
@@ -248,13 +249,22 @@ export interface UsageInsights {
   by_subagent_type: SubagentTypePct[];
 }
 
+export interface AgentTypeStat {
+  agent_type: string;
+  cost_usd: number;
+  total_tokens: number;
+  messages: number;
+}
+
 export interface StatsResponse {
   generated_at: string;
+  range_days: number;
   plan: Plan | null;
   claude_cache: ClaudeCacheStats | null;
   insights: UsageInsights | null;
   totals: Totals;
   by_model: ModelStat[];
+  by_agent_type: AgentTypeStat[];
   hours: WindowStat;
   week: WindowStat;
   daily: DailyStat[];
@@ -401,6 +411,7 @@ export interface RelatedSession {
   summary: SessionSummary;
   score: number;
   shared_files: string[];
+  same_branch: boolean;
 }
 
 export interface OpenLoop {

@@ -63,6 +63,9 @@ export default function RelatedSessions({ sessionId }: { sessionId: string }) {
               </Link>
               <span className="note-meta">
                 {relativeTime(r.summary.mtime)} · score {r.score}
+                {r.same_branch && r.summary.git_branch && (
+                  <span title="started on the same git branch"> · ⎇ {r.summary.git_branch}</span>
+                )}
               </span>
               {r.shared_files.length > 0 && (
                 <span className="note-meta related-files">

@@ -219,7 +219,8 @@ class Bucket(BaseModel):
 class WindowStat(BaseModel):
     label: str
     window_seconds: int
-    anchor: Optional[datetime] = None  # first activity within the window
+    anchor: Optional[datetime] = None  # window start (observed reset or first activity)
+    anchor_source: Literal["reset", "estimated"] = "estimated"
     elapsed_seconds: int = 0
     remaining_seconds: int = 0
     input_tokens: int = 0
@@ -231,6 +232,15 @@ class WindowStat(BaseModel):
     bucket_seconds: int = 0
     buckets: list[Bucket] = Field(default_factory=list)
     budget_usd: Optional[float] = None
+
+
+class AgentTypeStat(BaseModel):
+    """Spend split by subagent type ('main thread' = the top-level session)."""
+
+    agent_type: str
+    cost_usd: float = 0.0
+    total_tokens: int = 0
+    messages: int = 0
 
 
 class DailyStat(BaseModel):
@@ -338,11 +348,13 @@ class UsageInsights(BaseModel):
 
 class StatsResponse(BaseModel):
     generated_at: datetime
+    range_days: int = 0  # reporting range (0 = all time); windows ignore this
     plan: Optional[Plan] = None
     claude_cache: Optional[ClaudeCacheStats] = None
     insights: Optional[UsageInsights] = None
     totals: Totals
     by_model: list[ModelStat] = Field(default_factory=list)
+    by_agent_type: list[AgentTypeStat] = Field(default_factory=list)
     hours: WindowStat
     week: WindowStat
     daily: list[DailyStat] = Field(default_factory=list)

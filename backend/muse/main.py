@@ -46,6 +46,8 @@ async def lifespan(app: FastAPI):
     # Drain any WAL inherited from a crashed/killed predecessor so we don't grow it.
     db.checkpoint(app.state.service.store._conn)
     app.state.autopilot = AutopilotController()
+    # Parsed usage-limit resets anchor stats' 5h window (observed > estimated).
+    app.state.autopilot.on_reset = app.state.service.usage_history.record_reset
     app.state.autopilot.start()
     app.state.alerts = AlertsWatcher(app.state.service)
     app.state.alerts.start()
@@ -67,6 +69,7 @@ async def lifespan(app: FastAPI):
             app.state.service.worklog.close()
             app.state.service.file_index.close()
             app.state.service.health.close()
+            app.state.service.usage_history.close()
             await app.state.autopilot.stop()
             lifecycle.remove_pidfile()
 

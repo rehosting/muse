@@ -6,10 +6,19 @@ import { formatDuration, formatTokens, formatUSD, shortModel } from "../util/for
 import PaceChart from "../components/PaceChart";
 import { usePolling } from "../hooks/usePolling";
 
+const RANGES: { days: number; label: string }[] = [
+  { days: 1, label: "Today" },
+  { days: 7, label: "7d" },
+  { days: 30, label: "30d" },
+  { days: 90, label: "90d" },
+  { days: 0, label: "All" },
+];
+
 export default function StatsPage() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [unhealthy, setUnhealthy] = useState<SessionSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [days, setDays] = useState<number>(7);
 
   const load = useCallback(() => {
     api
@@ -24,8 +33,8 @@ export default function StatsPage() {
         );
       })
       .catch(() => {});
-    return api.getStats().then(setStats).catch((e) => setError(String(e)));
-  }, []);
+    return api.getStats(days).then(setStats).catch((e) => setError(String(e)));
+  }, [days]);
   usePolling(load, 12000);
 
   if (error)
@@ -44,7 +53,20 @@ export default function StatsPage() {
   const t = stats.totals;
   return (
     <div className="list-wrap">
-      <h2 className="list-heading">Usage stats · across all sessions</h2>
+      <div className="stats-head">
+        <h2 className="list-heading">Usage stats</h2>
+        <div className="layout-switch" role="group" aria-label="Time range">
+          {RANGES.map((r) => (
+            <button
+              key={r.days}
+              className={`layout-btn inv-tab${days === r.days ? " active" : ""}`}
+              onClick={() => setDays(r.days)}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <p className="stat-note">
         Tokens are measured from your transcripts, deduped per API message, and
         cross-checked against Claude Code's own rollup below.{" "}
@@ -79,13 +101,17 @@ export default function StatsPage() {
         </>
       )}
 
-      <h3 className="stat-section">Last 7 days · local time</h3>
+      <h3 className="stat-section">
+        Daily trend · local time{days === 0 ? " · last 90 days" : ""}
+      </h3>
       <DailyChart stats={stats} />
 
       <h3 className="stat-section">Activity by hour · local time</h3>
       <HourChart stats={stats} />
 
-      <h3 className="stat-section">All-time totals</h3>
+      <h3 className="stat-section">
+        {days === 0 ? "All-time totals" : `Totals · ${days === 1 ? "today" : `last ${days} days`}`}
+      </h3>
       <div className="stat-cards">
         <BigStat label="Cost · API-equiv" value={formatUSD(t.cost_usd)} />
         <BigStat label="Input tokens" value={formatTokens(t.input_tokens)} accent="in" />
@@ -98,7 +124,7 @@ export default function StatsPage() {
         <BigStat label="Sessions" value={String(t.sessions)} />
       </div>
 
-      {stats.claude_cache && <CrossCheck stats={stats} />}
+      {days === 0 && stats.claude_cache && <CrossCheck stats={stats} />}
 
       <h3 className="stat-section">Caching</h3>
       <div className="stat-cards">
@@ -118,6 +144,26 @@ export default function StatsPage() {
 
       <h3 className="stat-section">Cost by model</h3>
       <ModelBars stats={stats} />
+
+      {stats.by_agent_type.length > 1 && (
+        <>
+          <h3 className="stat-section">Spend by agent type</h3>
+          <table className="model-table">
+            <tbody>
+              {stats.by_agent_type.map((a) => (
+                <tr key={a.agent_type}>
+                  <td className="model-name" style={{ textAlign: "left" }}>
+                    {a.agent_type === "main thread" ? a.agent_type : `🧵 ${a.agent_type}`}
+                  </td>
+                  <td>{a.messages.toLocaleString()} msgs</td>
+                  <td>{formatTokens(a.total_tokens)}</td>
+                  <td>{formatUSD(a.cost_usd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
 
       <h3 className="stat-section">Top sessions by cost</h3>
       <table className="model-table">
@@ -341,7 +387,17 @@ function WindowTracker({ w, estimated }: { w: WindowStat; estimated?: boolean })
   return (
     <div className="window-card">
       <div className="window-head">
-        <span className="window-label">{w.label}</span>
+        <span className="window-label">
+          {w.label}
+          {w.anchor_source === "reset" && (
+            <span
+              className="chip"
+              title="Window start anchored to a reset time the CLI actually reported (not estimated)"
+            >
+              ⚓ observed
+            </span>
+          )}
+        </span>
         <span className="window-reset">
           {w.messages > 0 ? `resets in ${formatDuration(w.remaining_seconds)}` : "idle"}
         </span>

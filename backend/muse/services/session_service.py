@@ -53,6 +53,7 @@ from .events import EventBroker
 from ..tailer import TailerRegistry
 from ..file_index import FileIndex
 from ..patterns import HealthStore, detect_patterns
+from ..usage_history import UsageHistoryStore
 from ..worklog import WorklogStore
 
 # Short TTLs so repeated polls (multiple tabs/pollers) reuse one computation
@@ -80,12 +81,12 @@ class SessionService:
         self.worklog = WorklogStore(get_settings().db_path)
         self.file_index = FileIndex(get_settings().db_path)
         self.health = HealthStore(get_settings().db_path)
+        self.usage_history = UsageHistoryStore(get_settings().db_path)
         self._sessions_cache: Optional[list[SessionSummary]] = None
         self._sessions_ts = 0.0
         self._sessions_lock = threading.Lock()
         self._sessions_refreshing = False
-        self._stats_cache: Optional[StatsResponse] = None
-        self._stats_ts = 0.0
+        self._stats_caches: dict[int, tuple[float, StatsResponse]] = {}
         self._search_refresh_ts = 0.0
         self._brief_cache: dict[str, tuple[float, dict]] = {}
         # Parse caches: the viewer page bursts 6–8 requests that all need the
@@ -147,13 +148,18 @@ class SessionService:
         self._sessions_ts = time.monotonic()
         return summaries
 
-    def get_stats(self) -> StatsResponse:
-        if self._stats_cache is not None and (time.monotonic() - self._stats_ts) < _STATS_TTL:
-            return self._stats_cache
-        result = stats.compute_stats()
-        self._stats_cache = result
-        self._stats_ts = time.monotonic()
+    def get_stats(self, days: int = 0) -> StatsResponse:
+        cached = self._stats_caches.get(days)
+        if cached is not None and (time.monotonic() - cached[0]) < _STATS_TTL:
+            return cached[1]
+        result = stats.compute_stats(days, self.usage_history)
+        self._stats_caches[days] = (time.monotonic(), result)
         return result
+
+    def roll_usage_history(self) -> int:
+        """Warm the usage cache AND persist per-day rollups (called by the
+        alerts tick) so long-range stats survive transcript deletion."""
+        return self.usage_history.roll(usage_cache.scan_all().events)
 
     # --- parse caches ---------------------------------------------------------
     _PARSE_CACHE_SLOTS = 6
@@ -329,8 +335,8 @@ class SessionService:
 
     def get_related_sessions(self, session_id: str, limit: int = 5) -> list[dict]:
         """Deterministic related-session scoring: same project (+2), edited-file
-        Jaccard overlap (+0–5), temporal adjacency within 24h (+1). Shared files
-        are returned as the explanation."""
+        Jaccard overlap (+0–5), same starting git branch (+2), temporal adjacency
+        within 24h (+1). Shared files / branch are returned as the explanation."""
         me = next((s for s in self.list_sessions() if s.session_id == session_id), None)
         mine = self.file_index.edited_files(session_id)
         sharing = {
@@ -343,6 +349,9 @@ class SessionService:
                 continue
             score = 0.0
             shared = sharing.get(s.session_id, [])
+            same_branch = bool(
+                me and me.git_branch and s.git_branch == me.git_branch
+            )
             if me and s.project_cwd and s.project_cwd == me.project_cwd:
                 score += 2
             if shared and mine:
@@ -350,11 +359,14 @@ class SessionService:
                 union = len(mine | theirs)
                 if union:
                     score += 5 * len(set(shared) & mine) / union
+            if same_branch:
+                score += 2  # started on the same branch (it may drift mid-session)
             if me and abs(s.mtime.timestamp() - me.mtime.timestamp()) < 86400:
                 score += 1
             if score >= 2:  # same-project alone qualifies; mere adjacency doesn't
                 scored.append({
                     "summary": s, "score": round(score, 2), "shared_files": shared,
+                    "same_branch": same_branch,
                 })
         scored.sort(key=lambda d: d["score"], reverse=True)
         return scored[:limit]

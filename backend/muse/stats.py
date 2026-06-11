@@ -13,6 +13,7 @@ from . import discovery
 from .claude_stats import load_claude_stats
 from .config import get_settings
 from .models import (
+    AgentTypeStat,
     Bucket,
     CostBreakdown,
     DailyStat,
@@ -61,7 +62,12 @@ class _Acc:
         return self.input + self.output + self.cc + self.cr
 
 
-def compute_stats() -> StatsResponse:
+def compute_stats(days: int = 0, history=None) -> StatsResponse:
+    """`days` selects the reporting range (0 = all time; 1/7/30/90). Totals and
+    breakdowns for days BEFORE today come from the persistent usage_daily
+    history (survives transcript deletion); today always comes from the live
+    scan. The 5h/weekly windows and insights ignore the range (always trailing).
+    """
     now = datetime.now(timezone.utc)
     settings = get_settings()
     plan = detect_plan(settings.limit_5h_usd, settings.limit_week_usd)
@@ -93,66 +99,145 @@ def compute_stats() -> StatsResponse:
         per_project[name] = [0.0, 0, 0, cnt]
     by_hour = [[0, 0.0] for _ in range(24)]  # [messages, cost] per LOCAL hour
 
-    # Pre-seed the last 7 daily buckets (LOCAL days — "today" must mean the
-    # user's today, not UTC's) so the chart always has every day.
+    # Pre-seed the daily buckets (LOCAL days — "today" must mean the user's
+    # today, not UTC's) so the chart always has every day in range.
     local_now = now.astimezone()
+    today_key = local_now.strftime("%Y-%m-%d")
+    chart_days = {0: 90, 1: 7, 7: 7, 30: 30, 90: 90}.get(days, 7)
     daily: dict[str, list[float]] = {}
-    for d in range(6, -1, -1):
+    for d in range(chart_days - 1, -1, -1):
         key = (local_now - timedelta(days=d)).strftime("%Y-%m-%d")
         daily[key] = [0, 0.0]
 
+    # Reporting-range cutoffs. Totals/breakdowns for past days come from the
+    # usage_daily history; the live scan contributes only TODAY to them (the
+    # seam rule that prevents double counting). Event-granular sections
+    # (tools, top sessions, by-hour) can't come from history — they use the
+    # live events with the range cutoff (best-effort beyond transcript
+    # retention).
+    range_start_day = (
+        (local_now - timedelta(days=days - 1)).strftime("%Y-%m-%d") if days else None
+    )
+    range_cut = (
+        (local_now - timedelta(days=days - 1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        if days
+        else None
+    )
+
+    # 5h-window anchor: if autopilot ever observed a real reset time, the
+    # window boundaries are reset + k*5h — far more honest than "first event in
+    # the trailing 5h". One observation anchors every later window.
+    anchor_source = "estimated"
     hours_cut = now - timedelta(seconds=HOUR5_SECONDS)
+    if history is not None:
+        reset = history.latest_reset()
+        if reset is not None:
+            k = (now - reset).total_seconds() // HOUR5_SECONDS
+            window_start = reset + timedelta(seconds=k * HOUR5_SECONDS)
+            if window_start <= now:
+                hours_cut = window_start
+                anchor_source = "reset"
     week_cut = now - timedelta(seconds=WEEK_SECONDS)
 
+    by_agent: dict[str, list[float]] = {}  # agent_type -> [cost, tokens, messages]
+
+    # --- history: days before today, within range -----------------------------
+    if history is not None:
+        yesterday_key = (local_now - timedelta(days=1)).strftime("%Y-%m-%d")
+        for r in history.rows(range_start_day, yesterday_key):
+            i, o, cc, cr = r["input"], r["output"], r["cc"], r["cr"]
+            model, cost, msgs = r["model"], r["cost_usd"], r["messages"]
+            p = price_for(model)
+            cost_in += i * p.input / 1_000_000
+            cost_out += o * p.output / 1_000_000
+            cost_cw += cc * p.cache_write / 1_000_000
+            cost_cr += cr * p.cache_read / 1_000_000
+            cache_savings += cr * (p.input - p.cache_read) / 1_000_000
+            for acc in (totals, by_model.setdefault(model, _Acc())):
+                acc.input += i
+                acc.output += o
+                acc.cc += cc
+                acc.cr += cr
+                acc.cost += cost
+                acc.messages += msgs
+            pp = per_project.setdefault(r["project_dir"], [0.0, 0, 0, 0])
+            pp[0] += cost
+            pp[1] += i + o + cc + cr
+            pp[2] += msgs
+            ba = by_agent.setdefault(r["agent_type"], [0.0, 0, 0])
+            ba[0] += cost
+            ba[1] += i + o + cc + cr
+            ba[2] += msgs
+            if r["day"] in daily:
+                daily[r["day"]][0] += i + o + cc  # work tokens, see below
+                daily[r["day"]][1] += cost
+
+    # --- live scan: windows always; totals only for today ----------------------
     for e in scan.events:
+        ts = e.ts
+        local_day = ts.astimezone().strftime("%Y-%m-%d") if ts else today_key
+        in_range = range_cut is None or (ts is None) or ts >= range_cut.astimezone(timezone.utc)
         # Tool calls are counted regardless of whether usage is present.
-        for name in e.tools:
-            tool_counts[name] = tool_counts.get(name, 0) + 1
+        if in_range:
+            for name in e.tools:
+                tool_counts[name] = tool_counts.get(name, 0) + 1
         if e.total <= 0:
             continue  # tools-only event (no token usage)
 
-        i, o, cc, cr, model, ts = e.input, e.output, e.cc, e.cr, e.model, e.ts
+        i, o, cc, cr, model = e.input, e.output, e.cc, e.cr, e.model
         cost = cost_usd(model, i, o, cc, cr)
         tok = e.total
 
-        # Cost split by category + savings from reading cache vs full input rate.
-        p = price_for(model)
-        cost_in += i * p.input / 1_000_000
-        cost_out += o * p.output / 1_000_000
-        cost_cw += cc * p.cache_write / 1_000_000
-        cost_cr += cr * p.cache_read / 1_000_000
-        cache_savings += cr * (p.input - p.cache_read) / 1_000_000
-
-        totals.add(i, o, cc, cr, cost, ts)
-        by_model.setdefault(model or "unknown", _Acc()).add(i, o, cc, cr, cost, ts)
-        ps = per_session.setdefault(e.sid, [0.0, 0, 0])
-        ps[0] += cost
-        ps[1] += tok
-        ps[2] += 1
-        pp = per_project.setdefault(e.project_dir, [0.0, 0, 0, 0])
-        pp[0] += cost
-        pp[1] += tok
-        pp[2] += 1
+        # Today's contribution to totals/breakdowns (history covers past days
+        # when available; without a history store, all in-range days count).
+        counts_in_totals = in_range and (
+            history is None or local_day == today_key
+        )
+        if counts_in_totals:
+            p = price_for(model)
+            cost_in += i * p.input / 1_000_000
+            cost_out += o * p.output / 1_000_000
+            cost_cw += cc * p.cache_write / 1_000_000
+            cost_cr += cr * p.cache_read / 1_000_000
+            cache_savings += cr * (p.input - p.cache_read) / 1_000_000
+            totals.add(i, o, cc, cr, cost, ts)
+            by_model.setdefault(model or "unknown", _Acc()).add(i, o, cc, cr, cost, ts)
+            pp = per_project.setdefault(e.project_dir, [0.0, 0, 0, 0])
+            pp[0] += cost
+            pp[1] += tok
+            pp[2] += 1
+            ba = by_agent.setdefault(e.agent_type or "", [0.0, 0, 0])
+            ba[0] += cost
+            ba[1] += tok
+            ba[2] += 1
+            if local_day in daily:
+                # Work tokens only (in + out + cache writes). Cache READS are
+                # re-reads of the cached prefix — including them buries the
+                # signal under billions of tokens/day.
+                daily[local_day][0] += i + o + cc
+                daily[local_day][1] += cost
+        if in_range:
+            ps = per_session.setdefault(e.sid, [0.0, 0, 0])
+            ps[0] += cost
+            ps[1] += tok
+            ps[2] += 1
         if ts:
             local_ts = ts.astimezone()
-            by_hour[local_ts.hour][0] += 1
-            by_hour[local_ts.hour][1] += cost
+            if in_range:
+                by_hour[local_ts.hour][0] += 1
+                by_hour[local_ts.hour][1] += cost
             if ts >= hours_cut:
                 hours.add(i, o, cc, cr, cost, ts)
                 hours_events.append((ts, cost, tok))
             if ts >= week_cut:
                 week.add(i, o, cc, cr, cost, ts)
                 week_events.append((ts, cost, tok))
-                key = local_ts.strftime("%Y-%m-%d")
-                if key in daily:
-                    # Work tokens only (in + out + cache writes). Cache READS are
-                    # re-reads of the cached prefix — including them buries the
-                    # signal under billions of tokens/day.
-                    daily[key][0] += i + o + cc
-                    daily[key][1] += cost
 
     return StatsResponse(
         generated_at=now,
+        range_days=days,
         plan=plan,
         claude_cache=load_claude_stats(),
         insights=compute_insights(24, scan),
@@ -183,8 +268,25 @@ def compute_stats() -> StatsResponse:
             key=lambda m: m.cost_usd,
             reverse=True,
         ),
-        hours=_window("5-hour window", HOUR5_SECONDS, hours, now, hours_events, budget_5h),
+        hours=_window(
+            "5-hour window", HOUR5_SECONDS, hours, now, hours_events, budget_5h,
+            anchor_override=hours_cut if anchor_source == "reset" else None,
+            anchor_source=anchor_source,
+        ),
         week=_window("Weekly window", WEEK_SECONDS, week, now, week_events, budget_week),
+        by_agent_type=sorted(
+            (
+                AgentTypeStat(
+                    agent_type=name or "main thread",
+                    cost_usd=round(v[0], 4),
+                    total_tokens=int(v[1]),
+                    messages=int(v[2]),
+                )
+                for name, v in by_agent.items()
+            ),
+            key=lambda a: a.cost_usd,
+            reverse=True,
+        ),
         daily=[
             DailyStat(date=k, total_tokens=int(v[0]), cost_usd=round(v[1], 4))
             for k, v in daily.items()
@@ -251,7 +353,11 @@ def _window(
     now: datetime,
     events: list[tuple[datetime, float, int]],
     budget_usd: float | None,
+    anchor_override: Optional[datetime] = None,
+    anchor_source: str = "estimated",
 ) -> WindowStat:
+    if anchor_override is not None:
+        acc.anchor = anchor_override  # observed window boundary beats first-event
     elapsed = int((now - acc.anchor).total_seconds()) if acc.anchor else 0
     elapsed = max(0, min(window_seconds, elapsed))
 
@@ -272,6 +378,7 @@ def _window(
         label=label,
         window_seconds=window_seconds,
         anchor=acc.anchor,
+        anchor_source=anchor_source,
         elapsed_seconds=elapsed,
         remaining_seconds=window_seconds - elapsed,
         input_tokens=acc.input,

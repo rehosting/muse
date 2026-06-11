@@ -44,8 +44,11 @@ def list_sessions(request: Request) -> list[SessionSummary]:
 
 
 @router.get("/stats", response_model=StatsResponse)
-def get_stats(request: Request) -> StatsResponse:
-    return _service(request).get_stats()
+def get_stats(request: Request, days: int = 0) -> StatsResponse:
+    """days selects the reporting range: 0=all time, or 1/7/30/90."""
+    if days not in (0, 1, 7, 30, 90):
+        raise HTTPException(status_code=400, detail="days must be one of 0,1,7,30,90")
+    return _service(request).get_stats(days)
 
 
 @router.get("/search", response_model=SearchResponse)
