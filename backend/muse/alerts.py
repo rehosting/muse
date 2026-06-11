@@ -102,6 +102,12 @@ class AlertsWatcher:
             await asyncio.to_thread(self.service.refresh_search_index)
         except Exception:
             pass
+        # Keep the cross-session file-activity index warm too (cheap: only sessions
+        # whose mtime advanced re-extract, rate-limited per session inside sync).
+        try:
+            await asyncio.to_thread(self.service.refresh_file_index)
+        except Exception:
+            pass
         # Periodically truncate the shared WAL so it can't balloon (it once hit 462MB).
         now = time.monotonic()
         if now - self._last_checkpoint >= _CHECKPOINT_INTERVAL:

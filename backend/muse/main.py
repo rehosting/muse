@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI):
             app.state.service.notify_store.close()
             app.state.service.investigations.close()
             app.state.service.worklog.close()
+            app.state.service.file_index.close()
             await app.state.autopilot.stop()
             lifecycle.remove_pidfile()
 

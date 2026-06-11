@@ -5,7 +5,9 @@ import type {
   AlertEvent,
   AlertRules,
   Bookmark,
+  FileActivityGroup,
   FileChange,
+  FileHit,
   Investigation,
   InvestigationSummary,
   Journal,
@@ -16,6 +18,7 @@ import type {
   NotifyResult,
   PersistedOutput,
   ReentryBrief,
+  RelatedSession,
   SearchResponse,
   SessionBacklink,
   SessionEvent,
@@ -183,4 +186,14 @@ export const api = {
     getJSON<ReentryBrief>(`/api/sessions/${sessionId}/brief`),
 
   getOpenLoops: () => getJSON<OpenLoop[]>("/api/open-loops"),
+
+  // --- cross-session file activity ---
+  searchFiles: (q: string, limit = 50) =>
+    getJSON<FileHit[]>(`/api/files/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+
+  getFileActivity: (path: string) =>
+    getJSON<FileActivityGroup[]>(`/api/files/activity?path=${encodeURIComponent(path)}`),
+
+  getRelatedSessions: (sessionId: string) =>
+    getJSON<RelatedSession[]>(`/api/sessions/${sessionId}/related`),
 };

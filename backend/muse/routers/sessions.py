@@ -131,6 +131,24 @@ def get_lineage(session_id: str, request: Request) -> SessionLineage:
     return lin
 
 
+@router.get("/files/search")
+def search_files(q: str, request: Request, limit: int = 50) -> list[dict]:
+    """Distinct files matching a basename/path substring, across all sessions."""
+    return _service(request).search_files(q, limit)
+
+
+@router.get("/files/activity")
+def file_activity(path: str, request: Request) -> list[dict]:
+    """Every session that touched one file, with op groups + viewer anchors."""
+    return _service(request).file_activity(path)
+
+
+@router.get("/sessions/{session_id}/related")
+def get_related_sessions(session_id: str, request: Request) -> list[dict]:
+    """Related sessions: same project / shared edited files / temporal adjacency."""
+    return _service(request).get_related_sessions(session_id)
+
+
 @router.get("/sessions/{session_id}/brief")
 def get_reentry_brief(session_id: str, request: Request) -> dict:
     """Deterministic 'where you left off' summary for re-entering a session."""

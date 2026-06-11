@@ -50,6 +50,7 @@ from ..providers import provider_for, providers
 from ..search import SearchIndex
 from .events import EventBroker
 from ..tailer import TailerRegistry
+from ..file_index import FileIndex
 from ..worklog import WorklogStore
 
 # Short TTLs so repeated polls (multiple tabs/pollers) reuse one computation
@@ -75,6 +76,7 @@ class SessionService:
         self.notify_store = NotifyStore(get_settings().db_path)
         self.investigations = InvestigationStore(get_settings().db_path)
         self.worklog = WorklogStore(get_settings().db_path)
+        self.file_index = FileIndex(get_settings().db_path)
         self._sessions_cache: Optional[list[SessionSummary]] = None
         self._sessions_ts = 0.0
         self._sessions_lock = threading.Lock()
@@ -202,6 +204,60 @@ class SessionService:
                 pass
         self.search_index.sync(docs)
         self._search_refresh_ts = time.monotonic()
+
+    def refresh_file_index(self) -> int:
+        """Bring the file-activity index up to date: only sessions whose mtime
+        advanced are re-extracted (rate-limited per session inside sync), so a
+        live transcript isn't re-parsed every tick. Called by the alerts tick."""
+        def _changes(session_id: str):
+            try:
+                return self.get_file_changes(session_id)
+            except Exception:
+                return None
+        return self.file_index.sync(self.list_sessions(), _changes)
+
+    # --- file activity (cross-session: who touched this file?) ----------------
+    def search_files(self, q: str, limit: int = 50) -> list[dict]:
+        return self.file_index.search_files(q, limit)
+
+    def file_activity(self, file_path: str) -> list[dict]:
+        groups = self.file_index.activity_for(file_path)
+        titles = {s.session_id: s.title for s in self.list_sessions()}
+        for g in groups:
+            g["title"] = titles.get(g["session_id"])
+        return groups
+
+    def get_related_sessions(self, session_id: str, limit: int = 5) -> list[dict]:
+        """Deterministic related-session scoring: same project (+2), edited-file
+        Jaccard overlap (+0–5), temporal adjacency within 24h (+1). Shared files
+        are returned as the explanation."""
+        me = next((s for s in self.list_sessions() if s.session_id == session_id), None)
+        mine = self.file_index.edited_files(session_id)
+        sharing = {
+            d["session_id"]: d["shared_files"]
+            for d in self.file_index.sessions_sharing_files(session_id)
+        }
+        scored = []
+        for s in self.list_sessions():
+            if s.session_id == session_id:
+                continue
+            score = 0.0
+            shared = sharing.get(s.session_id, [])
+            if me and s.project_cwd and s.project_cwd == me.project_cwd:
+                score += 2
+            if shared and mine:
+                theirs = self.file_index.edited_files(s.session_id)
+                union = len(mine | theirs)
+                if union:
+                    score += 5 * len(set(shared) & mine) / union
+            if me and abs(s.mtime.timestamp() - me.mtime.timestamp()) < 86400:
+                score += 1
+            if score >= 2:  # same-project alone qualifies; mere adjacency doesn't
+                scored.append({
+                    "summary": s, "score": round(score, 2), "shared_files": shared,
+                })
+        scored.sort(key=lambda d: d["score"], reverse=True)
+        return scored[:limit]
 
     def search(self, q: str, limit: int = 30) -> SearchResponse:
         # The watcher keeps the index warm; only refresh inline if it's gone

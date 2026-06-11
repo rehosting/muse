@@ -353,6 +353,50 @@ def build_mcp() -> FastMCP:
                 f"References:\n{refs or '  (none)'}")
 
     @mcp.tool()
+    async def find_sessions_for_file(path_or_name: str) -> str:
+        """Every session that ever read/edited/wrote files matching `path_or_name`
+        (basename or path substring). Use this when debugging a file to pull up the
+        prior sessions that touched it, then get_step their exact edits via the
+        returned anchors. One line per file; then per-session op totals."""
+        files = await _to_thread(_svc().search_files, path_or_name, 20)
+        if not files:
+            return f"(no indexed file activity matches {path_or_name!r})"
+        out = []
+        for f in files[:10]:
+            out.append(
+                f"{f['file_path']} — {f['session_count']} session(s), "
+                f"{f['reads'] or 0}r/{f['edits'] or 0}e/{f['writes'] or 0}w"
+                f"{', ' + str(f['errors']) + ' errors' if f['errors'] else ''}"
+                f"{', last ' + f['last_ts'][:19] if f['last_ts'] else ''}"
+            )
+            groups = await _to_thread(_svc().file_activity, f["file_path"])
+            for g in groups[:5]:
+                anchors = [o["tool_use_id"] for o in g["ops"] if o["tool_use_id"]][:3]
+                out.append(
+                    f"  - {g['session_id']} ({g['title'] or '?'}): "
+                    f"{g['reads']}r/{g['edits']}e/{g['writes']}w"
+                    f" | anchors: {', '.join(anchors) or '-'}"
+                )
+        return "\n".join(out)
+
+    @mcp.tool()
+    async def get_related_sessions(session_id: str) -> str:
+        """Sessions related to this one (same project, shared edited files, temporal
+        adjacency), with the shared files as the explanation. Use to find prior or
+        parallel work on the same code before re-investigating."""
+        rel = await _to_thread(_svc().get_related_sessions, session_id)
+        if not rel:
+            return "(no related sessions found)"
+        lines = []
+        for r in rel:
+            s = r["summary"]
+            shared = f" | shared: {', '.join(r['shared_files'][:3])}" if r["shared_files"] else ""
+            lines.append(
+                f"{s.session_id} | score {r['score']} | {s.title}{shared}"
+            )
+        return "\n".join(lines)
+
+    @mcp.tool()
     async def get_reentry_brief(session_id: str) -> dict:
         """'Where you left off' for a stale session: the last user goal, open
         TodoWrite todos, errors since the last user turn, recently touched files,

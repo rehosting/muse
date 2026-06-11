@@ -351,6 +351,44 @@ export interface Journal {
   sessions: SessionSummary[];
 }
 
+export interface FileHit {
+  file_path: string;
+  basename: string;
+  session_count: number;
+  reads: number | null;
+  edits: number | null;
+  writes: number | null;
+  errors: number | null;
+  last_ts: string | null;
+}
+
+export interface FileActivityOp {
+  op: "read" | "edit" | "write";
+  tool_use_id: string | null;
+  is_error: boolean;
+  ts: string | null;
+}
+
+export interface FileActivityGroup {
+  session_id: string;
+  provider: string;
+  project_cwd: string | null;
+  title?: string | null;
+  ops: FileActivityOp[];
+  reads: number;
+  edits: number;
+  writes: number;
+  errors: number;
+  first_ts: string | null;
+  last_ts: string | null;
+}
+
+export interface RelatedSession {
+  summary: SessionSummary;
+  score: number;
+  shared_files: string[];
+}
+
 export interface OpenLoop {
   summary: SessionSummary;
   last_user_label: string | null;

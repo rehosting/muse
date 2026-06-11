@@ -20,6 +20,7 @@ import ViewerHeader, { type LayoutMode } from "../components/ViewerHeader";
 import SessionBacklinks from "../components/SessionBacklinks";
 import NotesPanel from "../components/NotesPanel";
 import ReentryBanner from "../components/ReentryBanner";
+import RelatedSessions from "../components/RelatedSessions";
 import { type SubNode } from "../components/SubagentTree";
 import ResizableSplit from "../components/ResizableSplit";
 import { useSessionStream } from "../hooks/useSessionStream";
@@ -510,6 +511,7 @@ export default function SessionViewPage() {
                   ?.scrollIntoView({ block: "center", behavior: "smooth" });
             }}
           />
+          <RelatedSessions sessionId={sessionId} />
           <ReentryBanner
             sessionId={sessionId}
             provider={current.provider}
