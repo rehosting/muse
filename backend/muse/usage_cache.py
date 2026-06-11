@@ -59,8 +59,9 @@ def _parse_ts(value) -> Optional[datetime]:
         return None
 
 
-# path -> (mtime, offset, events) — offset enables incremental (append-only) reads
-_file_cache: dict[Path, tuple[float, int, list[Event]]] = {}
+# path -> (mtime, offset, events, seen_msg_ids) — offset enables incremental
+# (append-only) reads; seen ids must persist across appends so dedupe holds.
+_file_cache: dict[Path, tuple[float, int, list[Event], set[str]]] = {}
 _meta_cache: dict[Path, tuple[float, str]] = {}
 
 
@@ -79,6 +80,7 @@ def _file_events(
     # Resume from the cached offset if the file only grew (append); else re-read.
     base_offset = cached[1] if (cached and size >= cached[1]) else 0
     events: list[Event] = list(cached[2]) if (cached and base_offset > 0) else []
+    seen: set[str] = set(cached[3]) if (cached and base_offset > 0) else set()
     objs, new_offset = new_objects(path, base_offset)
     for obj in objs:
         if obj.get("type") != "assistant":
@@ -91,6 +93,16 @@ def _file_events(
         ]
         usage = msg.get("usage")
         u = usage if isinstance(usage, dict) else {}
+        # One API response is streamed as SEVERAL transcript lines (one per
+        # content block), each repeating the SAME usage object under the same
+        # message id. Count usage once per message id — summing every line
+        # double-counts (it inflated totals ~2× vs Claude Code's own rollup).
+        msg_id = msg.get("id")
+        if u and msg_id:
+            if msg_id in seen:
+                u = {}
+            else:
+                seen.add(msg_id)
         if not u and not tools:
             continue
         events.append(
@@ -110,7 +122,7 @@ def _file_events(
                 agent_id=agent_id,
             )
         )
-    _file_cache[path] = (mtime, new_offset, events)
+    _file_cache[path] = (mtime, new_offset, events, seen)
     return events
 
 

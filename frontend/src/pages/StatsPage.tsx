@@ -46,17 +46,25 @@ export default function StatsPage() {
     <div className="list-wrap">
       <h2 className="list-heading">Usage stats · across all sessions</h2>
       <p className="stat-note">
-        Tokens are measured from your transcripts (cross-checked against Claude Code's own rollup
-        below). <strong>Cost is the API list-price equivalent</strong> of those tokens (cache-read
-        heavy) — not your subscription bill. The authoritative session/week limit % lives on
-        Anthropic's server; see “what's contributing” for what drives your usage.
+        Tokens are measured from your transcripts, deduped per API message, and
+        cross-checked against Claude Code's own rollup below.{" "}
+        <strong>Cost is the API list-price equivalent</strong> of those tokens — not your
+        subscription bill. The authoritative limit % lives on Anthropic's server; the
+        windows below estimate your pace against the plan budget.
       </p>
 
       {stats.plan && <PlanPanel plan={stats.plan} />}
 
+      <div className="window-cards">
+        <WindowTracker w={stats.hours} estimated={stats.plan?.budget_source !== "configured"} />
+        <WindowTracker w={stats.week} estimated={stats.plan?.budget_source !== "configured"} />
+      </div>
+
+      {stats.insights && <InsightsPanel insights={stats.insights} />}
+
       {unhealthy.length > 0 && (
         <>
-          <h3 className="list-heading">Sessions with issues · last 7 days</h3>
+          <h3 className="stat-section">Sessions with issues · last 7 days</h3>
           <div className="journal-quiet" style={{ marginBottom: 14 }}>
             {unhealthy.map((s) => (
               <div key={s.session_id}>
@@ -71,6 +79,13 @@ export default function StatsPage() {
         </>
       )}
 
+      <h3 className="stat-section">Last 7 days · local time</h3>
+      <DailyChart stats={stats} />
+
+      <h3 className="stat-section">Activity by hour · local time</h3>
+      <HourChart stats={stats} />
+
+      <h3 className="stat-section">All-time totals</h3>
       <div className="stat-cards">
         <BigStat label="Cost · API-equiv" value={formatUSD(t.cost_usd)} />
         <BigStat label="Input tokens" value={formatTokens(t.input_tokens)} accent="in" />
@@ -79,37 +94,11 @@ export default function StatsPage() {
           label="Cache tokens"
           value={formatTokens(t.cache_creation_input_tokens + t.cache_read_input_tokens)}
         />
-        <BigStat label="Messages" value={t.messages.toLocaleString()} />
+        <BigStat label="API messages" value={t.messages.toLocaleString()} />
         <BigStat label="Sessions" value={String(t.sessions)} />
       </div>
 
-      <div className="stat-cards">
-        <BigStat
-          label="Avg $/session"
-          value={formatUSD(t.sessions ? t.cost_usd / t.sessions : 0)}
-        />
-        <BigStat
-          label="Avg $/message"
-          value={formatUSD(t.messages ? t.cost_usd / t.messages : 0)}
-        />
-        <BigStat
-          label="Avg tokens/msg"
-          value={formatTokens(t.messages ? Math.round(t.total_tokens / t.messages) : 0)}
-        />
-        <BigStat
-          label="Output : input"
-          value={`${(t.input_tokens ? t.output_tokens / t.input_tokens : 0).toFixed(1)}×`}
-        />
-      </div>
-
       {stats.claude_cache && <CrossCheck stats={stats} />}
-
-      <div className="window-cards">
-        <WindowTracker w={stats.hours} estimated={stats.plan?.budget_source !== "configured"} />
-        <WindowTracker w={stats.week} estimated={stats.plan?.budget_source !== "configured"} />
-      </div>
-
-      {stats.insights && <InsightsPanel insights={stats.insights} />}
 
       <h3 className="stat-section">Caching</h3>
       <div className="stat-cards">
@@ -155,12 +144,6 @@ export default function StatsPage() {
           </span>
         ))}
       </div>
-
-      <h3 className="stat-section">Last 7 days (cost)</h3>
-      <DailyChart stats={stats} />
-
-      <h3 className="stat-section">Activity by hour (UTC)</h3>
-      <HourChart stats={stats} />
 
       <h3 className="stat-section">By project</h3>
       <table className="model-table">

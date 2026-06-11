@@ -18,7 +18,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import db
+from . import db, usage_cache
 from .incremental import new_objects
 from .models import AlertEvent
 from .paths import SessionPaths
@@ -26,6 +26,7 @@ from .paths import SessionPaths
 # How often (seconds) the watcher truncates the WAL. wal_autocheckpoint is the real
 # backstop; this just keeps muse.db-wal small on the one always-on writer-cadence loop.
 _CHECKPOINT_INTERVAL = 60.0
+_USAGE_WARM_INTERVAL = 60.0  # mtime-cached, so warm calls only parse changed files
 
 
 def _scan_errors(objs: list[dict]) -> list[str]:
@@ -62,6 +63,7 @@ class AlertsWatcher:
         self._primed = False
         self._log: deque[AlertEvent] = deque(maxlen=100)
         self._last_checkpoint = 0.0
+        self._last_usage_warm = 0.0
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -114,6 +116,14 @@ class AlertsWatcher:
             await asyncio.to_thread(self.service.refresh_health_index)
         except Exception:
             pass
+        # Keep the usage cache warm so /api/stats never pays the cold full-corpus
+        # parse on the request path (post-restart it costs ~20s ONCE, here).
+        if time.monotonic() - self._last_usage_warm >= _USAGE_WARM_INTERVAL:
+            self._last_usage_warm = time.monotonic()
+            try:
+                await asyncio.to_thread(usage_cache.scan_all)
+            except Exception:
+                pass
         # Periodically truncate the shared WAL so it can't balloon (it once hit 462MB).
         now = time.monotonic()
         if now - self._last_checkpoint >= _CHECKPOINT_INTERVAL:

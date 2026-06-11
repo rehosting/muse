@@ -91,12 +91,14 @@ def compute_stats() -> StatsResponse:
     per_project: dict[str, list[float]] = {}  # dir -> [cost, tokens, messages, sessions]
     for name, cnt in scan.sessions_by_project.items():
         per_project[name] = [0.0, 0, 0, cnt]
-    by_hour = [[0, 0.0] for _ in range(24)]  # [messages, cost] per UTC hour
+    by_hour = [[0, 0.0] for _ in range(24)]  # [messages, cost] per LOCAL hour
 
-    # Pre-seed the last 7 daily buckets so the chart always has every day.
+    # Pre-seed the last 7 daily buckets (LOCAL days — "today" must mean the
+    # user's today, not UTC's) so the chart always has every day.
+    local_now = now.astimezone()
     daily: dict[str, list[float]] = {}
     for d in range(6, -1, -1):
-        key = (now - timedelta(days=d)).strftime("%Y-%m-%d")
+        key = (local_now - timedelta(days=d)).strftime("%Y-%m-%d")
         daily[key] = [0, 0.0]
 
     hours_cut = now - timedelta(seconds=HOUR5_SECONDS)
@@ -132,17 +134,21 @@ def compute_stats() -> StatsResponse:
         pp[1] += tok
         pp[2] += 1
         if ts:
-            by_hour[ts.hour][0] += 1
-            by_hour[ts.hour][1] += cost
+            local_ts = ts.astimezone()
+            by_hour[local_ts.hour][0] += 1
+            by_hour[local_ts.hour][1] += cost
             if ts >= hours_cut:
                 hours.add(i, o, cc, cr, cost, ts)
                 hours_events.append((ts, cost, tok))
             if ts >= week_cut:
                 week.add(i, o, cc, cr, cost, ts)
                 week_events.append((ts, cost, tok))
-                key = ts.strftime("%Y-%m-%d")
+                key = local_ts.strftime("%Y-%m-%d")
                 if key in daily:
-                    daily[key][0] += tok
+                    # Work tokens only (in + out + cache writes). Cache READS are
+                    # re-reads of the cached prefix — including them buries the
+                    # signal under billions of tokens/day.
+                    daily[key][0] += i + o + cc
                     daily[key][1] += cost
 
     return StatsResponse(
