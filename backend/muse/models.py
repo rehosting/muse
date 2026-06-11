@@ -371,6 +371,7 @@ class SearchResponse(BaseModel):
     query: str
     indexed_sessions: int = 0
     available: bool = True  # False if SQLite lacks FTS5
+    loose: bool = False  # AND query found nothing; these hits are the OR fallback
     hits: list[SearchHit] = Field(default_factory=list)
 
 
@@ -432,6 +433,10 @@ class Annotations(BaseModel):
 
 InvestigationAuthor = Literal["ai", "user"]
 
+# A retro(spective) is structurally an investigation — markdown + session refs —
+# tagged so the UI can filter and badge it separately.
+InvestigationKind = Literal["investigation", "retro"]
+
 
 class InvestigationRef(BaseModel):
     """A pointer from an Investigation into a specific session (and optionally a
@@ -451,6 +456,7 @@ class Investigation(BaseModel):
     body: str = ""  # markdown prose
     author: InvestigationAuthor = "ai"
     status: str = "open"  # free-form (e.g. open | resolved)
+    kind: InvestigationKind = "investigation"
     refs: list[InvestigationRef] = Field(default_factory=list)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -461,6 +467,7 @@ class InvestigationSummary(BaseModel):
     title: str
     author: InvestigationAuthor = "ai"
     status: str = "open"
+    kind: InvestigationKind = "investigation"
     ref_count: int = 0
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -472,6 +479,7 @@ class SessionBacklink(BaseModel):
     investigation_id: str
     investigation_title: str
     author: InvestigationAuthor = "ai"
+    kind: InvestigationKind = "investigation"
     ref: InvestigationRef
 
 
@@ -569,6 +577,7 @@ class SessionSummary(BaseModel):
     is_running: bool = False
     awaiting_user: bool = False
     state: Literal["live", "waiting", "stopped"] = "stopped"
+    health: Optional[Literal["ok", "warn", "bad"]] = None  # failure-pattern badge
 
 
 class SubagentUsage(BaseModel):

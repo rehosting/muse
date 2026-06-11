@@ -21,6 +21,7 @@ import SessionBacklinks from "../components/SessionBacklinks";
 import NotesPanel from "../components/NotesPanel";
 import ReentryBanner from "../components/ReentryBanner";
 import RelatedSessions from "../components/RelatedSessions";
+import HealthBar from "../components/HealthBar";
 import { type SubNode } from "../components/SubagentTree";
 import ResizableSplit from "../components/ResizableSplit";
 import { useSessionStream } from "../hooks/useSessionStream";
@@ -512,6 +513,16 @@ export default function SessionViewPage() {
             }}
           />
           <RelatedSessions sessionId={sessionId} />
+          <HealthBar
+            sessionId={sessionId}
+            onFocus={(uuid) => {
+              if (toolsById.has(uuid)) selectTool(uuid, "log");
+              else
+                convItemRefs.current
+                  .get(uuid)
+                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }}
+          />
           <ReentryBanner
             sessionId={sessionId}
             provider={current.provider}

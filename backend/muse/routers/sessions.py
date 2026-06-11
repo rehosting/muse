@@ -149,6 +149,15 @@ def get_related_sessions(session_id: str, request: Request) -> list[dict]:
     return _service(request).get_related_sessions(session_id)
 
 
+@router.get("/sessions/{session_id}/health")
+def get_session_health(session_id: str, request: Request) -> dict:
+    """Failure patterns: retry loops, error spirals, permission-denial clusters."""
+    health = _service(request).get_session_health(session_id)
+    if health is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return health
+
+
 @router.get("/sessions/{session_id}/brief")
 def get_reentry_brief(session_id: str, request: Request) -> dict:
     """Deterministic 'where you left off' summary for re-entering a session."""

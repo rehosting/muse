@@ -108,6 +108,12 @@ class AlertsWatcher:
             await asyncio.to_thread(self.service.refresh_file_index)
         except Exception:
             pass
+        # Re-score failure patterns (retry loops / error spirals / denials) for
+        # changed sessions so the list can badge health from one table read.
+        try:
+            await asyncio.to_thread(self.service.refresh_health_index)
+        except Exception:
+            pass
         # Periodically truncate the shared WAL so it can't balloon (it once hit 462MB).
         now = time.monotonic()
         if now - self._last_checkpoint >= _CHECKPOINT_INTERVAL:

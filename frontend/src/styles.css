@@ -3958,6 +3958,88 @@ body.resizing {
   font-family: var(--mono, monospace);
 }
 
+.cmdk-loose {
+  padding: 4px 14px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-style: italic;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Retro badge (retrospectives are kind-tagged investigations) */
+.retro-chip {
+  background: var(--bg-elev2);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 0 5px;
+  text-transform: uppercase;
+}
+.inv-tab {
+  width: auto;
+  padding: 2px 10px;
+}
+
+/* Session health (failure-pattern) badges */
+.health-chip {
+  font-size: 10px;
+  line-height: 1;
+}
+.health-bar.health-bad .notes-toggle {
+  color: var(--err, #e66);
+}
+.health-bar.health-warn .notes-toggle {
+  color: var(--warn, #db5);
+}
+
+/* Compare page: two SessionPanes side by side */
+.compare-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.compare-wrap > * {
+  flex: 1;
+  min-height: 0;
+}
+.compare-side {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.compare-side .session-pane {
+  flex: 1;
+  min-height: 0;
+}
+.compare-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+.compare-pick {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 6px;
+}
+.compare-stats {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 /* Per-session token count chip on the session list */
 .tok-chip {
   color: var(--tool);

@@ -54,6 +54,13 @@ export default function RelatedSessions({ sessionId }: { sessionId: string }) {
               <Link to={`/sessions/${r.summary.session_id}`} className="related-title">
                 {r.summary.title}
               </Link>
+              <Link
+                to={`/compare?a=${sessionId}&b=${r.summary.session_id}`}
+                className="backlink-ref"
+                title="compare side-by-side"
+              >
+                ⇆ compare
+              </Link>
               <span className="note-meta">
                 {relativeTime(r.summary.mtime)} · score {r.score}
               </span>

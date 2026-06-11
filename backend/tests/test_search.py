@@ -44,7 +44,7 @@ def test_sync_and_search_roundtrip(idx):
     assert added == 2
     assert idx.indexed_sessions() == 1
 
-    hits = idx.search("tokenizer")
+    hits = idx.search("tokenizer")[0]
     assert len(hits) == 1
     assert hits[0]["session_id"] == "codex:abc"
     assert hits[0]["uuid"] == "u1"
@@ -56,7 +56,7 @@ def test_sync_and_search_roundtrip(idx):
     # Vanished file is pruned.
     idx.sync([])
     assert idx.indexed_sessions() == 0
-    assert idx.search("tokenizer") == []
+    assert idx.search("tokenizer")[0] == []
 
 
 def test_append_only_adds_just_new_rows(idx):
@@ -67,8 +67,8 @@ def test_append_only_adds_just_new_rows(idx):
     added = idx.sync([_doc("/s/a.jsonl", 2.0, "codex:x", [r1, r2], size=2)])
     assert added == 1
     # Both old and new rows are searchable, and the old row isn't duplicated.
-    assert len(idx.search("alpha")) == 1
-    assert len(idx.search("beta")) == 1
+    assert len(idx.search("alpha")[0]) == 1
+    assert len(idx.search("beta")[0]) == 1
 
 
 def test_truncation_triggers_full_reindex(idx):
@@ -78,8 +78,8 @@ def test_truncation_triggers_full_reindex(idx):
     # Size shrank → the file was rewritten/truncated → full reindex, old rows gone.
     added = idx.sync([_doc("/s/a.jsonl", 2.0, "codex:x", [("u3", "user", None, "gamma")], size=1)])
     assert added == 1
-    assert idx.search("alpha") == [] and idx.search("beta") == []
-    assert len(idx.search("gamma")) == 1
+    assert idx.search("alpha")[0] == [] and idx.search("beta")[0] == []
+    assert len(idx.search("gamma")[0]) == 1
 
 
 def test_non_append_safe_full_reindex(idx):
@@ -89,8 +89,44 @@ def test_non_append_safe_full_reindex(idx):
                           append_safe=False)]) == 1
     idx.sync([_doc("oc:1", 2.0, "opencode:1", [("a", "user", None, "omega")],
                    append_safe=False)])
-    assert idx.search("alpha") == []
-    assert len(idx.search("omega")) == 1
+    assert idx.search("alpha")[0] == []
+    assert len(idx.search("omega")[0]) == 1
+
+
+def test_or_fallback_marks_loose(idx):
+    idx.sync([_doc("/s/a.jsonl", 1.0, "codex:x",
+                   [("u1", "user", None, "alpha tokenizer")])])
+    # AND of both terms misses; OR fallback finds the alpha row, marked loose.
+    rows, loose = idx.search("alpha zzznope")
+    assert len(rows) == 1 and loose is True
+    # A strict hit is never marked loose.
+    rows, loose = idx.search("alpha")
+    assert len(rows) == 1 and loose is False
+    # Single unmatched term: no fallback possible.
+    assert idx.search("zzznope") == ([], False)
+
+
+def test_query_filters(idx):
+    idx.sync([
+        _doc("/s/a.jsonl", 1.0, "codex:x",
+             [("u1", "user", "2026-06-01T00:00:00Z", "alpha from codex")]),
+        _doc("/s/b.jsonl", 1.0, "claude-uuid",
+             [("u2", "assistant", "2026-06-09T00:00:00Z", "alpha from claude")]),
+    ])
+    assert {r["session_id"] for r in idx.search("alpha")[0]} == {"codex:x", "claude-uuid"}
+    assert [r["session_id"] for r in idx.search("alpha provider:codex")[0]] == ["codex:x"]
+    assert [r["session_id"] for r in idx.search("alpha provider:claude")[0]] == ["claude-uuid"]
+    assert [r["session_id"] for r in idx.search("alpha role:user")[0]] == ["codex:x"]
+    assert [r["session_id"] for r in idx.search("alpha after:2026-06-05")[0]] == ["claude-uuid"]
+
+
+def test_user_rows_rank_first(idx):
+    idx.sync([_doc("/s/a.jsonl", 1.0, "s", [
+        ("a1", "assistant", None, "alpha discussion result"),
+        ("u1", "user", None, "alpha discussion question"),
+    ])])
+    rows, _ = idx.search("alpha discussion")
+    assert rows[0]["role"] == "user"  # boosted past the assistant row
 
 
 def _write_jsonl(path, objs):

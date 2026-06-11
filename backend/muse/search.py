@@ -56,14 +56,55 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
 """
 
 
-def _build_match_query(q: str) -> Optional[str]:
-    """Forgiving FTS5 query: AND of prefix-matched terms. None if no usable terms."""
-    terms = []
+def _terms(q: str) -> list[str]:
+    out = []
     for raw in q.split():
         cleaned = "".join(ch for ch in raw if ch.isalnum() or ch in "_-.").strip()
         if cleaned:
-            terms.append(f'"{cleaned}"*')
-    return " ".join(terms) if terms else None
+            out.append(f'"{cleaned}"*')
+    return out
+
+
+def _build_match_query(q: str, op: str = " ") -> Optional[str]:
+    """Forgiving FTS5 query: prefix-matched terms joined by `op` (default AND;
+    pass " OR " for the loose fallback). None if no usable terms."""
+    terms = _terms(q)
+    return op.join(terms) if terms else None
+
+
+# Session-id prefixes by provider (claude ids are unprefixed UUIDs, no colon).
+_PROVIDER_PREFIX = {"codex": "codex:", "gemini": "gemini:", "opencode": "opencode:"}
+
+
+def _parse_filters(q: str) -> tuple[str, list[str], list]:
+    """Pull `project:` / `role:` / `provider:` / `after:` tokens out of the query
+    and return (remaining_text, where_clauses, params)."""
+    words, clauses, params = [], [], []
+    for tok in q.split():
+        key, _, val = tok.partition(":")
+        if not val:
+            words.append(tok)
+            continue
+        k = key.lower()
+        if k == "project":
+            clauses.append("project_dir LIKE ?")
+            params.append(f"%{val}%")
+        elif k == "role":
+            clauses.append("role = ?")
+            params.append(val.lower())
+        elif k == "provider":
+            prefix = _PROVIDER_PREFIX.get(val.lower())
+            if prefix:
+                clauses.append("session_id LIKE ?")
+                params.append(f"{prefix}%")
+            elif val.lower() == "claude":
+                clauses.append("session_id NOT LIKE '%:%'")
+        elif k == "after":
+            clauses.append("ts >= ?")
+            params.append(val)
+        else:
+            words.append(tok)  # unknown key — treat as a search term
+    return " ".join(words), clauses, params
 
 
 class SearchIndex:
@@ -163,26 +204,43 @@ class SearchIndex:
             return 0  # give up gracefully; next tick retries
 
     # --- querying -----------------------------------------------------------
-    def search(self, q: str, limit: int = 30) -> list[dict]:
+    def search(self, q: str, limit: int = 30) -> tuple[list[dict], bool]:
+        """Returns (rows, loose). Supports `project:` / `role:` / `provider:` /
+        `after:` filter tokens. The strict query ANDs all terms; if it finds
+        nothing, an OR fallback runs and `loose=True` marks the result."""
         if not self.available:
-            return []
-        match = _build_match_query(q)
-        if not match:
-            return []
+            return [], False
+        text, clauses, params = _parse_filters(q)
+        extra = "".join(f" AND {c}" for c in clauses)
+        # Rank: bm25 (lower = better) with a small boost for user turns — what the
+        # *user* said about a topic usually locates the session faster.
         sql = (
             "SELECT session_id, project_dir, uuid, role, ts, "
             f"snippet(search_fts, 6, '{MARK_START}', '{MARK_END}', '…', 12) AS snippet "
-            "FROM search_fts WHERE search_fts MATCH ? ORDER BY rank LIMIT ?"
+            f"FROM search_fts WHERE search_fts MATCH ?{extra} "
+            "ORDER BY rank + (CASE WHEN role='user' THEN -1.0 ELSE 0.0 END) LIMIT ?"
         )
-        def _do():
-            with self._lock:
-                return self._conn.execute(sql, (match, limit)).fetchall()
 
+        def _run(match: str):
+            def _do():
+                with self._lock:
+                    return self._conn.execute(sql, (match, *params, limit)).fetchall()
+            return db.retry_locked(_do)
+
+        match = _build_match_query(text)
+        if not match:
+            return [], False
         try:
-            rows = db.retry_locked(_do)
+            rows = _run(match)
+            loose = False
+            if not rows and len(_terms(text)) > 1:
+                loose_match = _build_match_query(text, " OR ")
+                if loose_match:
+                    rows = _run(loose_match)
+                    loose = bool(rows)
         except sqlite3.OperationalError:
-            return []
-        return [dict(r) for r in rows]
+            return [], False
+        return [dict(r) for r in rows], loose
 
     def indexed_sessions(self) -> int:
         if not self.available:

@@ -5,11 +5,21 @@ import type { InvestigationSummary } from "../api/types";
 import { relativeTime } from "../util/format";
 import { usePolling } from "../hooks/usePolling";
 
+type Tab = "all" | "investigation" | "retro";
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "investigation", label: "Investigations" },
+  { key: "retro", label: "Retros" },
+];
+
 /** List of Investigations — markup documents the user's Claude Code authors over
- * MCP (or the user writes by hand) that reference real sessions. */
+ * MCP (or the user writes by hand) that reference real sessions. Retros (session
+ * post-mortems) share the same shape and live under their own tab. */
 export default function InvestigationsPage() {
   const [items, setItems] = useState<InvestigationSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("all");
   const navigate = useNavigate();
 
   const load = useCallback(
@@ -34,10 +44,25 @@ export default function InvestigationsPage() {
       </div>
     );
 
+  const visible = items?.filter((i) => tab === "all" || (i.kind ?? "investigation") === tab);
+  const retroCount = items?.filter((i) => i.kind === "retro").length ?? 0;
+
   return (
     <div className="list-wrap">
       <div className="inv-list-head">
         <h2 className="list-heading">Investigations · most recent first</h2>
+        <div className="layout-switch" role="group" aria-label="Filter by kind">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              className={`layout-btn inv-tab${tab === t.key ? " active" : ""}`}
+              onClick={() => setTab(t.key)}
+            >
+              {t.label}
+              {t.key === "retro" && retroCount > 0 ? ` (${retroCount})` : ""}
+            </button>
+          ))}
+        </div>
         <button className="action-btn primary" onClick={create}>
           + New
         </button>
@@ -47,16 +72,19 @@ export default function InvestigationsPage() {
         evidence inside sessions. Connect with{" "}
         <code>claude mcp add --transport http muse http://127.0.0.1:8848/mcp</code>.
       </p>
-      {items && items.length === 0 && (
-        <div className="empty">No investigations yet.</div>
+      {visible && visible.length === 0 && (
+        <div className="empty">
+          {tab === "retro" ? "No retros yet — ask Claude to create_retrospective a session." : "No investigations yet."}
+        </div>
       )}
       {!items && <div className="empty">Loading…</div>}
-      {items?.map((i) => (
+      {visible?.map((i) => (
         <Link to={`/investigations/${i.id}`} className="session-card" key={i.id}>
           <div className="session-card-top">
             <span className={`author-badge author-${i.author}`}>
               {i.author === "ai" ? "AI" : "you"}
             </span>
+            {i.kind === "retro" && <span className="chip retro-chip">retro</span>}
             <div className="title">{i.title}</div>
             {i.status && i.status !== "open" && (
               <span className="chip">{i.status}</span>

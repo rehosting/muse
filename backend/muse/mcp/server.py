@@ -287,6 +287,29 @@ def build_mcp() -> FastMCP:
                 "url": _ui_url(f"/investigations/{inv.id}")}
 
     @mcp.tool()
+    async def create_retrospective(
+        session_id: str, body: str, title: str = "", refs: Optional[list[dict]] = None
+    ) -> dict:
+        """Save a retrospective (post-mortem) of one session. Recipe: first call
+        get_session, get_errors, get_session_health, get_file_changes and (claude)
+        get_session_tokens; then structure `body` as markdown with sections
+        '## Goal', '## What worked', '## What failed', '## Lessons', '## Follow-ups',
+        anchoring claims with `refs` ({session_id, anchor_uuid, comment}). The
+        session itself is referenced automatically. Retros appear under the Retros
+        tab in muse's Investigations page and as badges on the session."""
+        all_refs = [{"session_id": session_id}] + list(refs or [])
+        try:
+            inv = await _to_thread(
+                _svc().create_investigation,
+                title or f"Retro: {session_id[:12]}", body, "ai", "open",
+                all_refs, "retro",
+            )
+        except ValueError as e:
+            return {"error": str(e)}  # bad ref id — fix and retry
+        return {"id": inv.id, "title": inv.title, "kind": "retro",
+                "ref_count": len(inv.refs), "url": _ui_url(f"/investigations/{inv.id}")}
+
+    @mcp.tool()
     async def append_to_investigation(investigation_id: str, body: str) -> dict:
         """Append a markdown paragraph to an existing investigation's body."""
         inv = await _to_thread(
@@ -331,12 +354,13 @@ def build_mcp() -> FastMCP:
 
     @mcp.tool()
     async def list_investigations() -> str:
-        """List all investigations: id | author | status | refs | title."""
+        """List all investigations and retros: id | kind | author | status | refs | title."""
         invs = await _to_thread(_svc().list_investigations)
         if not invs:
             return "(no investigations yet)"
         return "\n".join(
-            f"{i.id} | {i.author} | {i.status} | {i.ref_count} refs | {i.title}" for i in invs
+            f"{i.id} | {i.kind} | {i.author} | {i.status} | {i.ref_count} refs | {i.title}"
+            for i in invs
         )
 
     @mcp.tool()
@@ -395,6 +419,18 @@ def build_mcp() -> FastMCP:
                 f"{s.session_id} | score {r['score']} | {s.title}{shared}"
             )
         return "\n".join(lines)
+
+    @mcp.tool()
+    async def get_session_health(session_id: str) -> dict:
+        """Deterministic failure patterns for a session: retry loops (same tool
+        banged ≥3× with errors), error spirals (≥50% errors in a 10-result window),
+        permission-denial clusters, total error count, and an ok|warn|bad score.
+        Anchors in the patterns are [step <id>] ids usable with get_step. Feed this
+        into create_retrospective."""
+        health = await _to_thread(_svc().get_session_health, session_id)
+        if health is None:
+            return {"error": f"session not found: {session_id}"}
+        return health
 
     @mcp.tool()
     async def get_reentry_brief(session_id: str) -> dict:

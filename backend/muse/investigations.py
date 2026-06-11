@@ -47,6 +47,12 @@ CREATE INDEX IF NOT EXISTS inv_ref_inv_idx ON investigation_ref(investigation_id
 CREATE INDEX IF NOT EXISTS inv_ref_session_idx ON investigation_ref(session_id);
 """
 
+# Additive migrations (mirrors search.py): a retro is just an investigation with a
+# kind tag — same prose+refs shape, so it reuses the whole store/router/UI stack.
+_MIGRATIONS = [
+    "ALTER TABLE investigation ADD COLUMN kind TEXT NOT NULL DEFAULT 'investigation'",
+]
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -63,6 +69,11 @@ class InvestigationStore:
         self._lock = threading.Lock()
         self._conn = db.connect(path)
         self._conn.executescript(_SCHEMA)
+        for ddl in _MIGRATIONS:
+            try:
+                self._conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass  # column already exists
         self._conn.commit()
 
     def close(self) -> None:
@@ -134,17 +145,19 @@ class InvestigationStore:
         author: str = "ai",
         status: str = "open",
         refs: Optional[list[dict]] = None,
+        kind: str = "investigation",
     ) -> Investigation:
         inv_id = _new_id("inv")
         now = _now()
         author = author if author in ("ai", "user") else "ai"
+        kind = kind if kind in ("investigation", "retro") else "investigation"
 
         def work():
             self._conn.execute(
-                "INSERT INTO investigation(id, title, body, author, status, created_at, updated_at) "
-                "VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO investigation(id, title, body, author, status, kind, "
+                "created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
                 (inv_id, title.strip() or "Untitled investigation", body or "", author,
-                 status or "open", now, now),
+                 status or "open", kind, now, now),
             )
             return [
                 self._insert_ref(
@@ -158,7 +171,7 @@ class InvestigationStore:
         created_refs = self._write(work)
         return Investigation(
             id=inv_id, title=title.strip() or "Untitled investigation", body=body or "",
-            author=author, status=status or "open", refs=created_refs,
+            author=author, status=status or "open", kind=kind, refs=created_refs,
             created_at=now, updated_at=now,
         )
 
@@ -172,7 +185,7 @@ class InvestigationStore:
             refs = self._refs_for(investigation_id)
         return Investigation(
             id=row["id"], title=row["title"], body=row["body"] or "",
-            author=row["author"], status=row["status"], refs=refs,
+            author=row["author"], status=row["status"], kind=row["kind"], refs=refs,
             created_at=row["created_at"], updated_at=row["updated_at"],
         )
 
@@ -186,7 +199,8 @@ class InvestigationStore:
         return [
             InvestigationSummary(
                 id=r["id"], title=r["title"], author=r["author"], status=r["status"],
-                ref_count=r["ref_count"], created_at=r["created_at"], updated_at=r["updated_at"],
+                kind=r["kind"], ref_count=r["ref_count"],
+                created_at=r["created_at"], updated_at=r["updated_at"],
             )
             for r in rows
         ]
@@ -265,7 +279,7 @@ class InvestigationStore:
         """Backlinks: investigations that reference this session."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT r.*, i.title AS inv_title, i.author AS inv_author "
+                "SELECT r.*, i.title AS inv_title, i.author AS inv_author, i.kind AS inv_kind "
                 "FROM investigation_ref r JOIN investigation i ON i.id = r.investigation_id "
                 "WHERE r.session_id=? ORDER BY r.created_at, r.id",
                 (session_id,),
@@ -275,6 +289,7 @@ class InvestigationStore:
                 investigation_id=r["investigation_id"],
                 investigation_title=r["inv_title"],
                 author=r["inv_author"],
+                kind=r["inv_kind"],
                 ref=self._ref_from_row(r),
             )
             for r in rows

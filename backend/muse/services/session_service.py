@@ -51,6 +51,7 @@ from ..search import SearchIndex
 from .events import EventBroker
 from ..tailer import TailerRegistry
 from ..file_index import FileIndex
+from ..patterns import HealthStore, detect_patterns
 from ..worklog import WorklogStore
 
 # Short TTLs so repeated polls (multiple tabs/pollers) reuse one computation
@@ -77,6 +78,7 @@ class SessionService:
         self.investigations = InvestigationStore(get_settings().db_path)
         self.worklog = WorklogStore(get_settings().db_path)
         self.file_index = FileIndex(get_settings().db_path)
+        self.health = HealthStore(get_settings().db_path)
         self._sessions_cache: Optional[list[SessionSummary]] = None
         self._sessions_ts = 0.0
         self._sessions_lock = threading.Lock()
@@ -123,11 +125,13 @@ class SessionService:
             except Exception:
                 pass  # one provider failing shouldn't blank the whole list
         titles = self.store.all_titles()  # custom renames override derived titles
+        health = self.health.scores()  # one table read; snapshots refresh in the tick
         for s in summaries:
             custom = titles.get(s.session_id)
             if custom:
                 s.title = custom
                 s.title_source = "custom"
+            s.health = health.get(s.session_id)
         summaries.sort(key=lambda s: s.mtime, reverse=True)
         self._sessions_cache = summaries
         self._sessions_ts = time.monotonic()
@@ -216,6 +220,24 @@ class SessionService:
                 return None
         return self.file_index.sync(self.list_sessions(), _changes)
 
+    def refresh_health_index(self) -> int:
+        """Re-score failure patterns for sessions whose mtime advanced (rate-
+        limited per session inside sync). Called by the alerts tick."""
+        def _events(session_id: str):
+            try:
+                return self.get_events(session_id)
+            except Exception:
+                return None
+        return self.health.sync(self.list_sessions(), _events)
+
+    def get_session_health(self, session_id: str) -> Optional[dict]:
+        """Failure patterns for one session: computed fresh from the events (cheap
+        for a single session), falling back to the snapshot if it can't parse."""
+        events = self.get_events(session_id)
+        if events is not None:
+            return detect_patterns(events)
+        return self.health.get(session_id)
+
     # --- file activity (cross-session: who touched this file?) ----------------
     def search_files(self, q: str, limit: int = 50) -> list[dict]:
         return self.file_index.search_files(q, limit)
@@ -264,7 +286,7 @@ class SessionService:
         # stale (e.g. watcher disabled), and at most once per TTL.
         if (time.monotonic() - self._search_refresh_ts) > _SEARCH_REFRESH_TTL:
             self.refresh_search_index()
-        rows = self.search_index.search(q, limit)
+        rows, loose = self.search_index.search(q, limit)
         # Enrich with titles/cwd from the (TTL-cached) session list.
         summaries = {s.session_id: s for s in self.list_sessions()}
         hits: list[SearchHit] = []
@@ -291,6 +313,7 @@ class SessionService:
             query=q,
             indexed_sessions=self.search_index.indexed_sessions(),
             available=self.search_index.available,
+            loose=loose,
             hits=hits,
         )
 
@@ -729,9 +752,10 @@ class SessionService:
     def create_investigation(
         self, title: str, body: str = "", author: str = "ai",
         status: str = "open", refs: Optional[list[dict]] = None,
+        kind: str = "investigation",
     ) -> Investigation:
         self._validate_refs(refs or [])
-        return self.investigations.create_investigation(title, body, author, status, refs)
+        return self.investigations.create_investigation(title, body, author, status, refs, kind)
 
     def get_investigation(self, investigation_id: str) -> Optional[Investigation]:
         return self.investigations.get_investigation(investigation_id)

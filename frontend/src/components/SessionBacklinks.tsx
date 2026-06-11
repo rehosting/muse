@@ -31,12 +31,12 @@ export default function SessionBacklinks({
 
   const byInv = new Map<
     string,
-    { title: string; author: string; refs: SessionBacklink[] }
+    { title: string; author: string; kind: string; refs: SessionBacklink[] }
   >();
   for (const l of links) {
     const g =
       byInv.get(l.investigation_id) ??
-      { title: l.investigation_title, author: l.author, refs: [] };
+      { title: l.investigation_title, author: l.author, kind: l.kind, refs: [] };
     g.refs.push(l);
     byInv.set(l.investigation_id, g);
   }
@@ -46,6 +46,7 @@ export default function SessionBacklinks({
       <span className="backlinks-label">🔗 Referenced by</span>
       {[...byInv.entries()].map(([id, g]) => (
         <span key={id} className="backlink-chip">
+          {g.kind === "retro" && <span className="retro-chip">retro</span>}
           <Link to={`/investigations/${id}`} className={`backlink-inv author-${g.author}`}>
             {g.title}
           </Link>

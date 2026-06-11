@@ -38,6 +38,7 @@ class InvestigationCreate(BaseModel):
     body: str = ""
     author: str = "user"  # REST default is user; MCP tools pass author="ai"
     status: str = "open"
+    kind: str = "investigation"  # investigation | retro
     refs: list[RefInput] = []
 
 
@@ -58,7 +59,7 @@ def create_investigation(body: InvestigationCreate, request: Request) -> Investi
     refs = [r.model_dump() for r in body.refs]
     try:
         return _service(request).create_investigation(
-            body.title, body.body, body.author, body.status, refs
+            body.title, body.body, body.author, body.status, refs, body.kind
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

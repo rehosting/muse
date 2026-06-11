@@ -22,6 +22,7 @@ import type {
   SearchResponse,
   SessionBacklink,
   SessionEvent,
+  SessionHealth,
   SessionLineage,
   SessionSummary,
   StatsResponse,
@@ -196,4 +197,7 @@ export const api = {
 
   getRelatedSessions: (sessionId: string) =>
     getJSON<RelatedSession[]>(`/api/sessions/${sessionId}/related`),
+
+  getSessionHealth: (sessionId: string) =>
+    getJSON<SessionHealth>(`/api/sessions/${sessionId}/health`),
 };

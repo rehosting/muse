@@ -61,6 +61,14 @@ export default function SessionListPage() {
             </span>
             <div className="title">{s.title}</div>
             {s.is_running && <LiveBadge />}
+            {s.health && s.health !== "ok" && (
+              <span
+                className={`health-chip health-${s.health}`}
+                title={`Failure patterns detected — ${s.health}`}
+              >
+                {s.health === "bad" ? "🔴" : "🟡"}
+              </span>
+            )}
             <ExportMdButton sessionId={s.session_id} title={s.title} className="card-resume" />
             {!NO_RESUME.has(s.provider) && (
               <ResumeButton cwd={s.project_cwd} sessionId={s.session_id} className="card-resume" />

@@ -91,6 +91,15 @@ export interface SessionSummary {
   is_running: boolean;
   awaiting_user: boolean;
   state: "live" | "waiting" | "stopped";
+  health: "ok" | "warn" | "bad" | null;
+}
+
+export interface SessionHealth {
+  score: "ok" | "warn" | "bad";
+  error_count: number;
+  retry_loops: { tool: string | null; label: string; times: number; anchors: (string | null)[] }[];
+  error_spirals: { start_anchor: string | null; errors: number; window: number }[];
+  permission_denials: { label: string; anchor: string | null }[];
 }
 
 export interface ModelStat {
@@ -282,12 +291,15 @@ export interface InvestigationRef {
   created_at: string | null;
 }
 
+export type InvestigationKind = "investigation" | "retro";
+
 export interface Investigation {
   id: string;
   title: string;
   body: string;
   author: InvestigationAuthor;
   status: string;
+  kind: InvestigationKind;
   refs: InvestigationRef[];
   created_at: string | null;
   updated_at: string | null;
@@ -298,6 +310,7 @@ export interface InvestigationSummary {
   title: string;
   author: InvestigationAuthor;
   status: string;
+  kind: InvestigationKind;
   ref_count: number;
   created_at: string | null;
   updated_at: string | null;
@@ -307,6 +320,7 @@ export interface SessionBacklink {
   investigation_id: string;
   investigation_title: string;
   author: InvestigationAuthor;
+  kind: InvestigationKind;
   ref: InvestigationRef;
 }
 
@@ -561,6 +575,7 @@ export interface SearchResponse {
   query: string;
   indexed_sessions: number;
   available: boolean;
+  loose: boolean; // exact query found nothing; hits are the any-term fallback
   hits: SearchHit[];
 }
 

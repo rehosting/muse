@@ -1,19 +1,31 @@
 import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { StatsResponse, WindowStat } from "../api/types";
+import type { SessionSummary, StatsResponse, WindowStat } from "../api/types";
 import { formatDuration, formatTokens, formatUSD, shortModel } from "../util/format";
 import PaceChart from "../components/PaceChart";
 import { usePolling } from "../hooks/usePolling";
 
 export default function StatsPage() {
   const [stats, setStats] = useState<StatsResponse | null>(null);
+  const [unhealthy, setUnhealthy] = useState<SessionSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(
-    () => api.getStats().then(setStats).catch((e) => setError(String(e))),
-    [],
-  );
+  const load = useCallback(() => {
+    api
+      .listSessions()
+      .then((ss) => {
+        const cutoff = Date.now() - 7 * 86400_000;
+        setUnhealthy(
+          ss.filter(
+            (s) =>
+              s.health && s.health !== "ok" && new Date(s.mtime).getTime() >= cutoff,
+          ),
+        );
+      })
+      .catch(() => {});
+    return api.getStats().then(setStats).catch((e) => setError(String(e)));
+  }, []);
   usePolling(load, 12000);
 
   if (error)
@@ -41,6 +53,23 @@ export default function StatsPage() {
       </p>
 
       {stats.plan && <PlanPanel plan={stats.plan} />}
+
+      {unhealthy.length > 0 && (
+        <>
+          <h3 className="list-heading">Sessions with issues · last 7 days</h3>
+          <div className="journal-quiet" style={{ marginBottom: 14 }}>
+            {unhealthy.map((s) => (
+              <div key={s.session_id}>
+                <span className={`health-chip health-${s.health}`}>
+                  {s.health === "bad" ? "🔴" : "🟡"}
+                </span>{" "}
+                <Link to={`/sessions/${s.session_id}`}>{s.title}</Link>
+                <span className="note-meta"> · {s.project_cwd ?? s.project_dir}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="stat-cards">
         <BigStat label="Cost · API-equiv" value={formatUSD(t.cost_usd)} />

@@ -82,3 +82,17 @@ def test_remove_reference(store):
 
 def test_add_reference_to_missing_investigation(store):
     assert store.add_reference("inv_nope", "s1") is None
+
+
+def test_kind_tag_retro(store):
+    retro = store.create_investigation("Retro: s1", kind="retro",
+                                       refs=[{"session_id": "s1"}])
+    assert retro.kind == "retro"
+    assert store.get_investigation(retro.id).kind == "retro"
+    # default + invalid kinds fall back to 'investigation'
+    assert store.create_investigation("plain").kind == "investigation"
+    assert store.create_investigation("weird", kind="bogus").kind == "investigation"
+    kinds = {s.id: s.kind for s in store.list_investigations()}
+    assert kinds[retro.id] == "retro"
+    # backlinks carry the kind for the badge
+    assert store.get_session_references("s1")[0].kind == "retro"

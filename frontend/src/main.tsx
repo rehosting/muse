@@ -13,6 +13,7 @@ import InvestigationsPage from "./pages/InvestigationsPage";
 import InvestigationView from "./pages/InvestigationView";
 import JournalPage from "./pages/JournalPage";
 import FilesPage from "./pages/FilesPage";
+import ComparePage from "./pages/ComparePage";
 import "./styles.css";
 
 const router = createBrowserRouter([
@@ -29,6 +30,7 @@ const router = createBrowserRouter([
       { path: "investigations/:id", element: <InvestigationView /> },
       { path: "journal", element: <JournalPage /> },
       { path: "files", element: <FilesPage /> },
+      { path: "compare", element: <ComparePage /> },
       { path: "stats", element: <StatsPage /> },
       { path: "sessions/:sessionId", element: <SessionViewPage /> },
     ],

@@ -21,9 +21,10 @@ export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
-  const [meta, setMeta] = useState<{ indexed: number; available: boolean }>({
+  const [meta, setMeta] = useState<{ indexed: number; available: boolean; loose: boolean }>({
     indexed: 0,
     available: true,
+    loose: false,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +53,7 @@ export default function CommandPalette() {
     if (open) {
       requestAnimationFrame(() => inputRef.current?.focus());
       // Show the real indexed count immediately (empty query = cheap status).
-      api.search("").then((res) => setMeta({ indexed: res.indexed_sessions, available: res.available })).catch(() => {});
+      api.search("").then((res) => setMeta({ indexed: res.indexed_sessions, available: res.available, loose: false })).catch(() => {});
     } else {
       setQ("");
       setHits([]);
@@ -82,7 +83,7 @@ export default function CommandPalette() {
         .then((res) => {
           if (id !== reqId.current) return; // a newer query superseded this one
           setHits(res.hits);
-          setMeta({ indexed: res.indexed_sessions, available: res.available });
+          setMeta({ indexed: res.indexed_sessions, available: res.available, loose: res.loose });
           setCursor(0);
         })
         .catch((e) => {
@@ -149,7 +150,15 @@ export default function CommandPalette() {
             <div className="cmdk-empty cmdk-error">{error}</div>
           )}
           {meta.available && q.trim() && !loading && !error && hits.length === 0 && (
-            <div className="cmdk-empty">No matches.</div>
+            <div className="cmdk-empty">
+              No matches. Filters: <code>project:</code> <code>role:</code>{" "}
+              <code>provider:</code> <code>after:YYYY-MM-DD</code>
+            </div>
+          )}
+          {meta.available && meta.loose && hits.length > 0 && (
+            <div className="cmdk-loose">
+              No exact match for all terms — showing any-term matches.
+            </div>
           )}
           {hits.map((h, i) => (
             <div
