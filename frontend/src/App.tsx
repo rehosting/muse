@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import CommandPalette from "./components/CommandPalette";
+import ThemeToggle from "./components/ThemeToggle";
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
         >
           Search <kbd>⌘K</kbd>
         </button>
+        <ThemeToggle />
       </nav>
       <main className="content">
         <Outlet />

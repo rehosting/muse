@@ -1,4 +1,3 @@
-import crab from "../assets/crab.png";
 import { abbrevHome, contextLabel, modelDisplay } from "../util/format";
 
 const PROVIDER_NAME: Record<string, string> = {
@@ -32,14 +31,14 @@ export default function WelcomeBanner({
 
   return (
     <div className="cc-banner">
-      {provider === "claude" && <img className="cc-banner-crab" src={crab} alt="" />}
+      <span className="cc-banner-star">✻</span>
       <div className="cc-banner-lines">
         <div className="cc-banner-l1">
-          {PROVIDER_NAME[provider] ?? provider}
-          {version ? ` v${version}` : ""}
+          Welcome to {PROVIDER_NAME[provider] ?? provider}
+          {version ? ` v${version}` : ""}!
         </div>
         {modelLine && <div className="cc-banner-l2">{modelLine}</div>}
-        {cwd && <div className="cc-banner-l3">{abbrevHome(cwd)}</div>}
+        {cwd && <div className="cc-banner-l3">cwd: {abbrevHome(cwd)}</div>}
       </div>
     </div>
   );

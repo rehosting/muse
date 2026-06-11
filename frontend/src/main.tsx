@@ -15,6 +15,9 @@ import JournalPage from "./pages/JournalPage";
 import FilesPage from "./pages/FilesPage";
 import ComparePage from "./pages/ComparePage";
 import "./styles.css";
+import { initTheme } from "./components/ThemeToggle";
+
+initTheme(); // set data-theme before first paint (no wrong-theme flash)
 
 const router = createBrowserRouter([
   {

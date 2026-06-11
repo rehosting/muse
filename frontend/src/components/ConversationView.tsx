@@ -290,9 +290,9 @@ function ResultConnector({
     <div className="cc-result">
       <span className="cc-connector">⎿</span>{" "}
       <span className="cc-result-text">
-        {shown.join("\n") || "(no output)"}
-        {extra > 0 && <span className="cc-dim">{`\n… +${extra} lines`}</span>}
-        {truncated && <span className="cc-dim">{`\n… (truncated — open detail for full output)`}</span>}
+        {shown.join("\n") || "(No content)"}
+        {extra > 0 && <span className="cc-dim">{`\n… +${extra} lines (click to expand)`}</span>}
+        {truncated && <span className="cc-dim">{`\n… (output truncated — click to expand)`}</span>}
       </span>
     </div>
   );
@@ -302,11 +302,11 @@ function Thinking({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="cc-thinking">
-      <span className="cc-bullet thinking-star" onClick={() => setOpen(!open)}>
+      <span className="thinking-star" onClick={() => setOpen(!open)}>
         ✻
-      </span>{" "}
-      <span className="cc-dim" style={{ cursor: "pointer" }} onClick={() => setOpen(!open)}>
-        {open ? "Thinking" : "Thinking… (click to expand)"}
+      </span>
+      <span className="cc-thinking-label" onClick={() => setOpen(!open)}>
+        {open ? "Thinking…" : "Thinking… (click to expand)"}
       </span>
       {open && <div className="cc-thinking-body">{text}</div>}
     </div>
