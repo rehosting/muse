@@ -218,6 +218,28 @@ class FileIndex:
             for sid, files in by_other.items()
         ]
 
+    def session_windows(self) -> dict[str, tuple[Optional[str], Optional[str]]]:
+        """session_id -> (first_ts, last_ts) over its file activity — the time
+        window the git provenance matcher gates on."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, MIN(ts) AS first_ts, MAX(ts) AS last_ts "
+                "FROM file_activity WHERE ts IS NOT NULL GROUP BY session_id"
+            ).fetchall()
+        return {r["session_id"]: (r["first_ts"], r["last_ts"]) for r in rows}
+
+    def edited_files_by_session(self) -> dict[str, set[str]]:
+        """session_id -> files it edited/wrote (bulk form of edited_files)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT session_id, file_path FROM file_activity "
+                "WHERE op IN ('edit','write')"
+            ).fetchall()
+        out: dict[str, set[str]] = {}
+        for r in rows:
+            out.setdefault(r["session_id"], set()).add(r["file_path"])
+        return out
+
     def indexed_sessions(self) -> int:
         with self._lock:
             row = self._conn.execute(

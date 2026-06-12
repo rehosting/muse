@@ -21,12 +21,17 @@ export default function NotesPanel({
 
   useEffect(() => {
     let ok = true;
-    api
-      .listNotes({ sessionId })
-      .then((n) => ok && setNotes(n))
-      .catch(() => ok && setNotes([]));
+    const load = () =>
+      api
+        .listNotes({ sessionId })
+        .then((n) => ok && setNotes(n))
+        .catch(() => ok && setNotes([]));
+    load();
+    // Refetch when something else lands a note (e.g. an AI summary job).
+    window.addEventListener("muse:notes-refresh", load);
     return () => {
       ok = false;
+      window.removeEventListener("muse:notes-refresh", load);
     };
   }, [sessionId]);
 

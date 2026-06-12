@@ -1,24 +1,24 @@
 /* ====== Theme tokens ======
-   Warm Anthropic-flavored palette. Dark is the default (:root); the light set
+   Modern blue palette (the original muse look). Dark is the default (:root); the light set
    overrides under [data-theme="light"] (toggled in the navbar, persisted).
    The conversation reconstruction is ALWAYS terminal-dark — see the .cc
    re-pinning block below — so it reads like an embedded Claude Code pane. */
 :root {
-  --bg: #1a1915;
-  --bg-elev: #21201c;
-  --bg-elev2: #2a2925;
-  --border: #393731;
-  --text: #e8e6dc;
-  --text-dim: #a39e90;
-  --accent: #d97757;
-  --accent-dim: #8a5743;
-  --user: #85b89a;
-  --assistant: #c0b3e0;
-  --error: #e5727a;
-  --tool: #d9a066;
-  --running: #6fae7d;
-  --warn: #d9b15c;
-  --err: #e5727a;
+  --bg: #0f1115;
+  --bg-elev: #171a21;
+  --bg-elev2: #1e222b;
+  --border: #2a2f3a;
+  --text: #d7dbe3;
+  --text-dim: #8b93a3;
+  --accent: #6ea8fe;
+  --accent-dim: #3a5a8c;
+  --user: #7ee2b8;
+  --assistant: #9db4ff;
+  --error: #ff7a85;
+  --tool: #f0b86e;
+  --running: #5fd97a;
+  --warn: #e3c06d;
+  --err: #ff7a85;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.25);
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.5);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -44,23 +44,23 @@
   --code-add-bg: #dafbe1;
   --code-del-fg: #82071e;
   --code-del-bg: #ffebe9;
-  --bg: #faf9f5;
+  --bg: #f6f8fa;
   --bg-elev: #ffffff;
-  --bg-elev2: #f0eee6;
-  --border: #e1ded3;
-  --text: #1f1e1d;
-  --text-dim: #716c60;
-  --accent: #c15f3c;
-  --accent-dim: #dba286;
-  --user: #2f7a55;
-  --assistant: #6b5b9e;
-  --error: #c43d4b;
-  --tool: #a8651a;
-  --running: #2f8a4c;
-  --warn: #a8821a;
-  --err: #c43d4b;
-  --shadow: 0 1px 2px rgba(31, 30, 29, 0.06), 0 4px 16px rgba(31, 30, 29, 0.07);
-  --shadow-pop: 0 12px 40px rgba(31, 30, 29, 0.18);
+  --bg-elev2: #eef1f5;
+  --border: #d8dee7;
+  --text: #1f2328;
+  --text-dim: #59636e;
+  --accent: #316dca;
+  --accent-dim: #9cc0f0;
+  --user: #1a7f4e;
+  --assistant: #5e5bd0;
+  --error: #c5303e;
+  --tool: #9a6700;
+  --running: #1a7f37;
+  --warn: #9a6700;
+  --err: #c5303e;
+  --shadow: 0 1px 2px rgba(31, 35, 40, 0.06), 0 4px 16px rgba(31, 35, 40, 0.07);
+  --shadow-pop: 0 12px 40px rgba(31, 35, 40, 0.18);
   color-scheme: light;
 }
 
@@ -72,19 +72,19 @@
 .panel-conversation .panel-scroll,
 .session-pane-body,
 .follow-pane-body {
-  --bg: #1a1915;
-  --bg-elev: #232120;
-  --bg-elev2: #2c2a27;
-  --border: #3a3733;
-  --text: #e8e6dc;
-  --text-dim: #999184;
-  --accent: #d97757;
-  --accent-dim: #8a5743;
-  --user: #85b89a;
-  --assistant: #e8e6dc;
-  --error: #e5727a;
-  --tool: #d9a066;
-  --running: #6fae7d;
+  --bg: #0f1115;
+  --bg-elev: #171a21;
+  --bg-elev2: #1e222b;
+  --border: #2a2f3a;
+  --text: #d7dbe3;
+  --text-dim: #8b93a3;
+  --accent: #6ea8fe;
+  --accent-dim: #3a5a8c;
+  --user: #7ee2b8;
+  --assistant: #d7dbe3;
+  --error: #ff7a85;
+  --tool: #f0b86e;
+  --running: #5fd97a;
   /* re-pin dark code tokens so light theme can't reach into the terminal */
   --code-bg: #0d1117;
   --code-fg: #c9d1d9;
@@ -4406,4 +4406,467 @@ body.resizing {
 }
 .inv-body .inv-cite:hover {
   border-bottom-style: solid;
+}
+
+/* --- Ask muse page + AI jobs ------------------------------------------------ */
+.ask-wrap {
+  max-width: 880px;
+}
+.ask-sub {
+  font-size: 12px;
+}
+.ask-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 10px 0 16px;
+}
+.ask-input {
+  flex: 1;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 60px;
+}
+.ask-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.ask-submit {
+  min-width: 72px;
+}
+.ask-warning {
+  color: var(--err);
+  font-size: 12px;
+  margin: 6px 0;
+}
+.ask-warning.dim {
+  color: var(--text-dim);
+}
+.ask-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin: 12px 0;
+}
+.ask-answer {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  padding: 14px 18px;
+  margin-bottom: 18px;
+}
+.ask-answer-meta {
+  margin-top: 10px;
+  font-size: 11px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.ai-jobs {
+  margin-top: 8px;
+}
+.ai-jobs-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.ai-job-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+.ai-job-row.clickable {
+  cursor: pointer;
+}
+.ai-job-row.clickable:hover {
+  background: var(--bg-elev2);
+}
+.ai-job-kind {
+  color: var(--tool);
+  min-width: 80px;
+}
+.ai-job-meta {
+  flex: 1;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-job-right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ai-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-dim);
+}
+.ai-dot.ai-queued {
+  background: var(--warn);
+}
+.ai-dot.ai-running {
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.ai-dot.ai-done {
+  background: var(--running);
+}
+.ai-dot.ai-error,
+.ai-dot.ai-cancelled {
+  background: var(--err);
+}
+.ai-cancel {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 7px;
+}
+.ai-cancel:hover {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* --- Mission-control board ---------------------------------------------------- */
+.board-wrap {
+  max-width: 980px;
+}
+.board-conn {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+  margin-left: 10px;
+}
+.board-conn-live {
+  color: var(--running);
+}
+.board-group {
+  margin-bottom: 18px;
+}
+.board-group-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+.board-group-title.attention {
+  color: var(--warn);
+}
+.board-group-title.working {
+  color: var(--running);
+}
+.board-stopped {
+  margin-top: 8px;
+}
+.board-stopped > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.board-stopped > summary::before {
+  content: "▸ ";
+}
+.board-stopped[open] > summary::before {
+  content: "▾ ";
+}
+.scard {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.scard-waiting {
+  border-left: 3px solid var(--warn);
+}
+.scard-live {
+  border-left: 3px solid var(--running);
+}
+.scard-stopped {
+  opacity: 0.75;
+}
+.scard-bad {
+  border-color: var(--err);
+}
+.scard-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.scard-check {
+  flex: none;
+}
+.scard-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot-busy {
+  background: var(--running);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.dot-idle {
+  background: var(--warn);
+}
+.dot-waiting {
+  background: var(--warn);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.dot-stopped {
+  background: var(--text-dim);
+}
+.scard-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 13px;
+}
+.scard-title:hover {
+  color: var(--accent);
+}
+.scard-right {
+  display: flex;
+  gap: 10px;
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.scard-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  margin: 4px 0 0 17px;
+  flex-wrap: wrap;
+}
+.scard-proj {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 380px;
+}
+.scard-ctx.ctx-hot {
+  color: var(--err);
+  font-weight: 600;
+}
+.health-badges {
+  display: inline-flex;
+  gap: 6px;
+}
+.health-badge {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+.health-badge.health-bad {
+  color: var(--err);
+  border-color: var(--err);
+}
+.health-badge.health-warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.scard-activity {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 6px 0 0 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scard-act-err {
+  color: var(--err);
+}
+.scard-act-icon {
+  margin-right: 6px;
+  user-select: none;
+}
+.scard-act-tool {
+  color: var(--tool);
+  font-weight: 600;
+  margin-right: 6px;
+}
+.scard-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0 17px;
+}
+.reply-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+.reply-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 9px;
+}
+.reply-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.reply-input:disabled {
+  opacity: 0.6;
+}
+.reply-esc {
+  color: var(--err);
+}
+.reply-error {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--err);
+}
+.term-peek {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  background: #0c0e12;
+  color: #ccd2dc;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 8px 0 0 17px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.term-peek-err {
+  color: var(--err);
+  background: transparent;
+}
+.journal-spacer { flex: 1; }
+
+/* --- Code provenance (commits ↔ sessions) --------------------------------- */
+.commits-panel {
+  padding: 6px 10px;
+}
+.commits-note {
+  font-size: 10px;
+  margin-bottom: 8px;
+}
+.commit-row {
+  border-bottom: 1px solid var(--border);
+  padding: 7px 0;
+}
+.commit-row:last-child {
+  border-bottom: none;
+}
+.commit-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.commit-conf {
+  font-size: 11px;
+  flex: none;
+}
+.conf-high {
+  color: var(--running);
+}
+.conf-medium {
+  color: var(--warn);
+}
+.conf-low {
+  color: var(--text-dim);
+}
+.commit-hash,
+.commit-hash-inline {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  flex: none;
+}
+.commit-subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.commit-files-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-dim);
+  flex: none;
+}
+.commit-meta {
+  font-size: 10px;
+  margin: 2px 0 0 19px;
+}
+.commit-files {
+  margin: 6px 0 0 19px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.commit-file {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-file.shared {
+  color: var(--text);
+  font-weight: 600;
+}
+.commit-show {
+  margin-top: 6px;
+  font-size: 10px;
+}
+.commit-hits {
+  margin-bottom: 14px;
 }

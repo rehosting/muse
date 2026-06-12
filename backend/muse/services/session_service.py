@@ -19,6 +19,8 @@ from .. import artifacts, changes, notify, pricing, stats, usage_cache
 from ..annotations import AnnotationStore
 from ..config import get_settings
 from ..models import (
+    AIJob,
+    AIStatus,
     AlertRules,
     Annotations,
     Bookmark,
@@ -43,7 +45,11 @@ from ..models import (
     UsagePoint,
     UsageTimeline,
 )
+from ..ai import context as ai_context
+from ..ai import prompts as ai_prompts
 from ..ai.digest import DigestResult, build_digest
+from ..ai.jobs import AIJobStore, AIWorker
+from ..ai.runner import ClaudeRunner, RunnerError
 from ..investigations import InvestigationStore
 from ..notify import NotifyStore
 from ..paths import find_session
@@ -53,6 +59,7 @@ from .events import EventBroker
 from ..autopilot import tmux
 from ..tailer import TailerRegistry
 from ..file_index import FileIndex
+from ..gitindex import GitIndex
 from ..patterns import HealthStore, detect_patterns
 from ..packs import PackStore
 from ..usage_history import UsageHistoryStore
@@ -72,6 +79,40 @@ _STATS_TTL = 15.0
 _SEARCH_REFRESH_TTL = 30.0  # on-demand fallback if the watcher isn't refreshing
 
 
+def _parse_iso(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    from datetime import timezone as _tz
+
+    return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
+
+
+def _split_refs_block(text: str) -> tuple[str, list[dict]]:
+    """Split a weekly-retro answer into (body_md, refs). The prompt asks for a
+    trailing ```refs fenced JSON array; parse it leniently and drop it from the
+    body. Any parse failure returns the full text with no refs."""
+    marker = "```refs"
+    idx = text.rfind(marker)
+    if idx < 0:
+        return text.strip(), []
+    body = text[:idx].strip()
+    block = text[idx + len(marker):]
+    end = block.find("```")
+    if end >= 0:
+        block = block[:end]
+    try:
+        refs = json.loads(block.strip())
+    except json.JSONDecodeError:
+        return body, []
+    if not isinstance(refs, list):
+        return body, []
+    return body, [r for r in refs if isinstance(r, dict) and r.get("session_id")]
+
+
 class SessionService:
     def __init__(self, broker: EventBroker) -> None:
         self.broker = broker
@@ -83,10 +124,20 @@ class SessionService:
         self.worklog = WorklogStore(get_settings().db_path)
         self.file_index = FileIndex(get_settings().db_path)
         self.health = HealthStore(get_settings().db_path)
+        self.git_index = GitIndex(get_settings().db_path)
         self.usage_history = UsageHistoryStore(get_settings().db_path)
         self.packs = PackStore(
             get_settings().db_path, get_settings().db_path.parent / "packs"
         )
+        # AI layer: headless `claude -p` jobs on a single daemon worker. The
+        # worker thread is started by the app lifespan (main.py), not here, so
+        # tests can construct a service without spawning threads.
+        self.ai_jobs = AIJobStore(get_settings().db_path)
+        self.ai_runner = ClaudeRunner(
+            get_settings().ai_claude_bin, get_settings().ai_workdir
+        )
+        self.ai_worker = AIWorker(store=self.ai_jobs, execute=self._execute_ai_job)
+        self.ai_worker.on_cancel_running = self.ai_runner.cancel
         self._sessions_cache: Optional[list[SessionSummary]] = None
         self._sessions_ts = 0.0
         self._sessions_lock = threading.Lock()
@@ -140,6 +191,14 @@ class SessionService:
                 summaries.extend(prov.iter_sessions())
             except Exception:
                 pass  # one provider failing shouldn't blank the whole list
+        # Drop muse's own headless `claude -p` runs: even with
+        # --no-session-persistence the CLI leaves a stub transcript whose cwd is
+        # our dedicated AI workdir. They are jobs, not sessions.
+        ai_cwd = str(get_settings().ai_workdir)
+        summaries = [
+            s for s in summaries
+            if not (s.project_cwd and s.project_cwd.startswith(ai_cwd))
+        ]
         titles = self.store.all_titles()  # custom renames override derived titles
         health = self.health.scores()  # one table read; snapshots refresh in the tick
         for s in summaries:
@@ -312,6 +371,47 @@ class SessionService:
             except Exception:
                 return None
         return self.health.sync(self._indexable_sessions(), _events)
+
+    def refresh_git_index(self) -> int:
+        """Harvest new commits from known project repos (rate-limited per repo,
+        capped per call) and rematch sessions ↔ commits. Called by the alerts
+        tick. Returns newly inserted commits."""
+        summaries = self.list_sessions()
+        cwds = {s.project_cwd for s in summaries if s.project_cwd}
+        inserted = self.git_index.sync(cwds)
+        windows = self.file_index.session_windows()
+        files = self.file_index.edited_files_by_session()
+        sessions = []
+        for s in summaries:
+            if not s.project_cwd:
+                continue
+            first_raw, last_raw = windows.get(s.session_id, (None, None))
+            first = _parse_iso(first_raw)
+            # mtime as the window's upper bound when file activity is sparse —
+            # commits often happen at the very end of a session.
+            last = max(filter(None, [_parse_iso(last_raw), s.mtime]), default=None)
+            if first is None:
+                first = last  # no file activity: a point window at mtime ± slack
+            sessions.append({
+                "session_id": s.session_id,
+                "cwd": s.project_cwd,
+                "branch": s.git_branch,
+                "first_ts": first,
+                "last_ts": last,
+                "files": files.get(s.session_id, set()),
+            })
+        self.git_index.rematch(sessions, force=inserted > 0)
+        return inserted
+
+    def get_session_commits(self, session_id: str) -> list[dict]:
+        return self.git_index.commits_for_session(session_id)
+
+    def find_sessions_for_commit(self, hash_prefix: str) -> list[dict]:
+        titles = {s.session_id: s.title for s in self.list_sessions()}
+        out = self.git_index.sessions_for_commit(hash_prefix)
+        for r in out:
+            r["title"] = titles.get(r["session_id"], r["session_id"])
+        return out
 
     def get_session_health(self, session_id: str, fresh: bool = False) -> Optional[dict]:
         """Failure patterns for one session. Default: serve the snapshot (one
@@ -1299,6 +1399,104 @@ class SessionService:
         events = self.get_events(session_id) or []
         files = self.get_file_changes(session_id) or []
         return build_digest(thread, events, files, max_context_tokens=max_context_tokens)
+
+    # --- AI layer (headless `claude -p` jobs) ----------------------------------
+    def ask_muse(self, question: str) -> "AIJob":
+        return self._enqueue_ai("ask", {"question": question.strip()})
+
+    def enqueue_session_summary(self, session_id: str) -> Optional["AIJob"]:
+        if not any(s.session_id == session_id for s in self.list_sessions()):
+            return None
+        return self._enqueue_ai("session_summary", {"session_id": session_id})
+
+    def enqueue_daily_digest(self, day: str) -> "AIJob":
+        return self._enqueue_ai("daily_digest", {"day": day})
+
+    def enqueue_weekly_retro(self, week_start: str) -> "AIJob":
+        return self._enqueue_ai("weekly_retro", {"week_start": week_start})
+
+    def _enqueue_ai(self, kind: str, params: dict) -> "AIJob":
+        job = self.ai_jobs.enqueue(kind, params, model=get_settings().ai_model)
+        self.ai_worker.kick()
+        return job
+
+    def cancel_ai_job(self, job_id: str) -> bool:
+        return self.ai_jobs.cancel(job_id) or self.ai_worker.cancel_running(job_id)
+
+    def ai_status(self) -> "AIStatus":
+        counts = self.ai_jobs.counts()
+        return AIStatus(
+            available=self.ai_runner.available(),
+            model=get_settings().ai_model,
+            queued=counts.get("queued", 0),
+            running=counts.get("running", 0),
+            total_cost_usd=round(self.ai_jobs.total_cost(), 4),
+            last_error=self.ai_jobs.last_error(),
+        )
+
+    def _execute_ai_job(self, job: "AIJob") -> dict:
+        """Worker callback: pack context, run claude -p once, route the output.
+        Raising marks the job errored; the worker survives."""
+        kind, params = job.kind, job.params
+        if kind == "ask":
+            prompt = ai_context.pack_for_ask(self, params.get("question", ""))
+        elif kind == "session_summary":
+            prompt = ai_context.pack_for_session(self, params.get("session_id", ""))
+        elif kind == "daily_digest":
+            prompt = ai_context.pack_for_day(self, params.get("day", ""))
+        elif kind == "weekly_retro":
+            prompt = ai_context.pack_for_week(self, params.get("week_start", ""))
+        else:  # pragma: no cover - enqueue() validates kinds
+            raise RunnerError(f"unknown job kind {kind!r}")
+        if prompt is None:
+            raise RunnerError("nothing to digest (no sessions in that range)")
+        run = self.ai_runner.run(
+            prompt,
+            system=ai_prompts.BY_KIND[kind],
+            model=job.model or get_settings().ai_model,
+            timeout=get_settings().ai_timeout_seconds,
+        )
+        result: dict = {
+            "answer_md": run.text,
+            "_meta": {
+                "cost_usd": run.cost_usd,
+                "duration_ms": run.duration_ms,
+                "model": job.model or get_settings().ai_model,
+            },
+        }
+        result.update(self._route_ai_output(kind, params, run.text))
+        return result
+
+    def _route_ai_output(self, kind: str, params: dict, text: str) -> dict:
+        """Persist non-ask outputs into the existing stores (notes/retros)."""
+        if kind == "session_summary":
+            note = self.worklog.create_note(
+                text, session_id=params.get("session_id"), kind="brief", author="ai"
+            )
+            return {"output_ref": {"type": "note", "id": note.id}}
+        if kind == "daily_digest":
+            note = self.worklog.create_note(
+                text, kind="brief", author="ai", day=params.get("day")
+            )
+            return {"output_ref": {"type": "note", "id": note.id}}
+        if kind == "weekly_retro":
+            body, refs = _split_refs_block(text)
+            inv = self.create_investigation(
+                title=f"Weekly retro — week of {params.get('week_start', '?')}",
+                body=body,
+                author="ai",
+                kind="retro",
+            )
+            for r in refs:
+                try:
+                    self.add_reference(
+                        inv.id, r["session_id"], r.get("anchor_uuid"),
+                        label=str(r.get("label") or "")[:120],
+                    )
+                except (ValueError, KeyError, TypeError):
+                    continue  # model-cited refs are best-effort; drop bad ones
+            return {"output_ref": {"type": "investigation", "id": inv.id}}
+        return {}
 
     # --- live tailing --------------------------------------------------------
     async def subscribe(self, session_id: str):

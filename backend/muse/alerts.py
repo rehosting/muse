@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from . import db
@@ -27,6 +27,7 @@ from .paths import SessionPaths
 # backstop; this just keeps muse.db-wal small on the one always-on writer-cadence loop.
 _CHECKPOINT_INTERVAL = 60.0
 _USAGE_WARM_INTERVAL = 60.0  # mtime-cached, so warm calls only parse changed files
+_AI_SCHEDULE_INTERVAL = 900.0  # auto-digest check cadence (opt-in via MUSE_AI_AUTO_DIGEST)
 
 
 def _scan_errors(objs: list[dict]) -> list[str]:
@@ -64,6 +65,7 @@ class AlertsWatcher:
         self._log: deque[AlertEvent] = deque(maxlen=100)
         self._last_checkpoint = 0.0
         self._last_usage_warm = 0.0
+        self._last_ai_schedule = 0.0
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -116,6 +118,12 @@ class AlertsWatcher:
             await asyncio.to_thread(self.service.refresh_health_index)
         except Exception:
             pass
+        # Harvest git commits from known project repos + rematch provenance
+        # (read-only `git log`; rate-limited per repo, capped per tick).
+        try:
+            await asyncio.to_thread(self.service.refresh_git_index)
+        except Exception:
+            pass
         # Keep the usage cache warm (so /api/stats never pays the cold full-corpus
         # parse on the request path) AND roll per-day usage into the persistent
         # history table so long-range stats survive transcript deletion.
@@ -123,6 +131,14 @@ class AlertsWatcher:
             self._last_usage_warm = time.monotonic()
             try:
                 await asyncio.to_thread(self.service.roll_usage_history)
+            except Exception:
+                pass
+        # Opt-in auto digests: once yesterday's sessions exist with no AI brief,
+        # enqueue a daily digest (Mondays additionally draft last week's retro).
+        if time.monotonic() - self._last_ai_schedule >= _AI_SCHEDULE_INTERVAL:
+            self._last_ai_schedule = time.monotonic()
+            try:
+                await asyncio.to_thread(self._schedule_ai_digests)
             except Exception:
                 pass
         # Periodically truncate the shared WAL so it can't balloon (it once hit 462MB).
@@ -180,6 +196,39 @@ class AlertsWatcher:
                 self._offsets.pop(sid, None)
 
         self._primed = True
+
+    def _schedule_ai_digests(self) -> None:
+        """Enqueue yesterday's daily digest (and, on Mondays, last week's retro)
+        when enabled and not already generated/pending. Runs in a worker thread."""
+        from .config import get_settings
+
+        if not get_settings().ai_auto_digest:
+            return
+        svc = self.service
+        if not svc.ai_runner.available():
+            return
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        journal = svc.get_journal(yesterday)
+        has_brief = any(
+            n.kind == "brief" and n.author == "ai" and n.session_id is None
+            for n in journal["notes"]
+        )
+        if (
+            journal["sessions"]
+            and not has_brief
+            and not svc.ai_jobs.has_pending("daily_digest", {"day": yesterday})
+        ):
+            svc.enqueue_daily_digest(yesterday)
+        # Monday: draft the retro for the week that just ended.
+        today = datetime.now()
+        if today.weekday() == 0:
+            week_start = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+            title = f"Weekly retro — week of {week_start}"
+            existing = any(i.title == title for i in svc.list_investigations())
+            if not existing and not svc.ai_jobs.has_pending(
+                "weekly_retro", {"week_start": week_start}
+            ):
+                svc.enqueue_weekly_retro(week_start)
 
     async def _fire(self, cfg, rules, summary, kind: str, message: str, detail: str) -> None:
         delivered, deliver_detail = False, "notifications disabled"

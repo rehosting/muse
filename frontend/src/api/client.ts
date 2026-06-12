@@ -1,5 +1,10 @@
 import type {
+  AIJob,
+  AIStatus,
   Annotations,
+  BoardSnapshot,
+  CommitSearchHit,
+  SessionCommit,
   AutopilotPolicy,
   AutopilotState,
   AlertEvent,
@@ -217,4 +222,56 @@ export const api = {
     sendJSON<LaunchResult>("POST", "/api/launch", body),
 
   getLaunchTargets: () => getJSON<string[]>("/api/launch/targets"),
+
+  // --- AI layer (headless claude -p jobs; enqueue then poll the job) ---
+  askMuse: (question: string) => sendJSON<AIJob>("POST", "/api/ai/ask", { question }),
+
+  getAiJob: (id: string) => getJSON<AIJob>(`/api/ai/jobs/${id}`),
+
+  listAiJobs: (limit = 50, kind?: string) =>
+    getJSON<AIJob[]>(`/api/ai/jobs?limit=${limit}${kind ? `&kind=${kind}` : ""}`),
+
+  cancelAiJob: (id: string) =>
+    sendJSON<{ ok: boolean }>("POST", `/api/ai/jobs/${id}/cancel`),
+
+  summarizeSession: (sessionId: string) =>
+    sendJSON<AIJob>("POST", `/api/sessions/${sessionId}/summarize`),
+
+  generateDailyDigest: (day?: string) =>
+    sendJSON<AIJob>("POST", "/api/ai/digest/daily", { day: day ?? "" }),
+
+  generateWeeklyRetro: (weekStart?: string) =>
+    sendJSON<AIJob>("POST", "/api/ai/retro/weekly", { week_start: weekStart ?? "" }),
+
+  getAiStatus: () => getJSON<AIStatus>("/api/ai/status"),
+
+  // --- code provenance ---
+  getSessionCommits: (sessionId: string) =>
+    getJSON<SessionCommit[]>(`/api/sessions/${sessionId}/commits`),
+
+  searchCommits: (q: string) =>
+    getJSON<CommitSearchHit[]>(`/api/commits/search?q=${encodeURIComponent(q)}`),
+
+  // --- mission-control board ---
+  getBoard: () => getJSON<BoardSnapshot>("/api/board"),
+
+  respondToSession: (sessionId: string, text: string, submit = true) =>
+    sendJSON<{ ok: boolean; pane_id: string }>(
+      "POST",
+      `/api/sessions/${sessionId}/respond`,
+      { text, submit },
+    ),
+
+  sendSessionKey: (sessionId: string, key: "escape" | "enter" | "accept") =>
+    sendJSON<{ ok: boolean }>("POST", `/api/sessions/${sessionId}/keys`, { key }),
+
+  getSessionSends: (sessionId: string, limit = 20) =>
+    getJSON<{ ts: string; action: string; detail: string }[]>(
+      `/api/sessions/${sessionId}/sends?limit=${limit}`,
+    ),
+
+  getTerminal: (sessionId: string, lines = 30) =>
+    getJSON<{ ok: boolean; text: string; error?: string }>(
+      `/api/sessions/${sessionId}/terminal?lines=${lines}`,
+    ),
 };

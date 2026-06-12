@@ -114,6 +114,108 @@ def detect_patterns(events: list[SessionEvent]) -> dict:
     }
 
 
+class RollingHealth:
+    """Incremental live-session health: the same three patterns as
+    `detect_patterns`, but fed raw transcript objects one at a time (the board
+    ticker's appended-bytes stream) so a RUNNING session can be flagged as
+    stuck without ever re-parsing its transcript.
+
+    Approximation note: retry runs are tracked over completed (call, result)
+    pairs in arrival order, which matches the batch detector for the
+    sequential tool use that retry loops actually exhibit."""
+
+    def __init__(self) -> None:
+        self._pending: dict[str, tuple[str, str]] = {}  # tool_use_id -> (tool, label40)
+        self._run_key: Optional[tuple[str, str]] = None
+        self._run_errors = 0
+        self._worst_run: Optional[tuple[str, int]] = None  # (tool, times)
+        self._recent_errors: list[bool] = []  # last N tool results
+        self._spiral = False
+        self._denials = 0
+        self._error_count = 0
+
+    def feed(self, obj: dict) -> None:
+        typ = obj.get("type")
+        if obj.get("isApiErrorMessage") or (typ == "system" and obj.get("level") == "error"):
+            self._error_count += 1
+            self._check_denial(str(obj.get("content") or ""))
+            return
+        if typ == "assistant":
+            for b in (obj.get("message") or {}).get("content") or []:
+                if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id"):
+                    inp = b.get("input") or {}
+                    label = ""
+                    for key in ("command", "file_path", "path", "pattern", "query",
+                                "description", "prompt", "url"):
+                        v = inp.get(key)
+                        if isinstance(v, str):
+                            label = v
+                            break
+                    self._pending[b["id"]] = (b.get("name") or "", label[:_PREFIX_LEN])
+            return
+        if typ != "user":
+            return
+        content = (obj.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            return
+        for b in content:
+            if not (isinstance(b, dict) and b.get("type") == "tool_result"):
+                continue
+            is_err = bool(b.get("is_error"))
+            self._recent_errors.append(is_err)
+            if len(self._recent_errors) > _SPIRAL_WINDOW:
+                self._recent_errors.pop(0)
+            if (
+                len(self._recent_errors) == _SPIRAL_WINDOW
+                and sum(self._recent_errors) >= _SPIRAL_WINDOW * _SPIRAL_RATIO
+            ):
+                self._spiral = True
+            text = b.get("content")
+            if isinstance(text, list):
+                text = " ".join(str(p.get("text", "")) for p in text if isinstance(p, dict))
+            if is_err:
+                self._error_count += 1
+                self._check_denial(str(text or ""))
+            # Retry-run tracking over completed pairs.
+            info = self._pending.pop(b.get("tool_use_id") or "", None)
+            if info is None:
+                continue
+            if is_err:
+                if self._run_key == info:
+                    self._run_errors += 1
+                else:
+                    self._run_key = info
+                    self._run_errors = 1
+                if self._run_errors >= _RETRY_MIN and (
+                    self._worst_run is None or self._run_errors > self._worst_run[1]
+                ):
+                    self._worst_run = (info[0], self._run_errors)
+            else:
+                self._run_key = None
+                self._run_errors = 0
+
+    def _check_denial(self, text: str) -> None:
+        if any(p in text.lower() for p in _DENIAL_PHRASES):
+            self._denials += 1
+
+    def score(self) -> tuple[str, list[str]]:
+        """(ok|warn|bad, human-readable flags) — thresholds mirror detect_patterns."""
+        flags: list[str] = []
+        if self._run_errors >= _RETRY_MIN:  # live, still in the loop right now
+            flags.append(f"stuck in retry loop ({self._run_key[0]} ×{self._run_errors})")
+        elif self._worst_run is not None:
+            flags.append(f"retry loop ({self._worst_run[0]} ×{self._worst_run[1]})")
+        if self._spiral:
+            flags.append("error spiral")
+        if self._denials >= _DENIAL_MIN:
+            flags.append(f"permission denials ×{self._denials}")
+        if flags:
+            return "bad", flags
+        if self._error_count >= 5 or self._denials:
+            return "warn", ([f"{self._error_count} errors"] if self._error_count else [])
+        return "ok", []
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS session_health (
     session_id  TEXT PRIMARY KEY,

@@ -3,12 +3,14 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type {
   FileChange,
+  SessionCommit,
   SessionEvent,
   SessionLineage,
   Thread,
   ThreadItem,
   ToolResult,
 } from "../api/types";
+import CommitsPanel from "../components/CommitsPanel";
 import type { Crumb } from "../components/Breadcrumb";
 import ConversationView, { type SelectSource } from "../components/ConversationView";
 import EventTimeline from "../components/EventTimeline";
@@ -72,7 +74,8 @@ export default function SessionViewPage() {
   // Per-file activity for the currently-viewed thread/subagent.
   const [files, setFiles] = useState<FileChange[]>([]);
   // Which view the middle panel shows, and a signal to force errors-only mode.
-  const [panelTab, setPanelTab] = useState<"timeline" | "files">("timeline");
+  const [panelTab, setPanelTab] = useState<"timeline" | "files" | "commits">("timeline");
+  const [commits, setCommits] = useState<SessionCommit[]>([]);
   const [errSignal, setErrSignal] = useState(0);
 
   // ---- data loading ----
@@ -113,6 +116,10 @@ export default function SessionViewPage() {
     setFiles([]);
     api.getEvents(sessionId, agentId).then(setEvents).catch(() => setEvents([]));
     api.getFiles(sessionId, agentId).then(setFiles).catch(() => setFiles([]));
+    // Provenance is session-level (not per-subagent).
+    if (!agentId) {
+      api.getSessionCommits(sessionId).then(setCommits).catch(() => setCommits([]));
+    }
   }, [sessionId, agentStack]);
 
   const errorCount = useMemo(() => events.filter((e) => e.is_error).length, [events]);
@@ -417,6 +424,15 @@ export default function SessionViewPage() {
         >
           Files · {files.length}
         </button>
+        {commits.length > 0 && agentStack.length === 0 && (
+          <button
+            className={`panel-tab${panelTab === "commits" ? " active" : ""}`}
+            title="Git commits this session likely produced (evidence-based)"
+            onClick={() => setPanelTab("commits")}
+          >
+            ⎘ Commits · {commits.length}
+          </button>
+        )}
         {errorCount > 0 && (
           <button
             className="panel-tab err-chip"
@@ -438,12 +454,14 @@ export default function SessionViewPage() {
             onSelect={onSelectEvent}
             errorsOnlySignal={errSignal}
           />
-        ) : (
+        ) : panelTab === "files" ? (
           <FileChanges
             files={files}
             selectedToolId={selectedToolId}
             onSelectOp={(id) => selectTool(id, "log")}
           />
+        ) : (
+          <CommitsPanel commits={commits} projectCwd={current?.project_cwd ?? null} />
         )}
       </div>
     </div>

@@ -66,6 +66,23 @@ class Settings:
         # a budget/pace line so usage can be compared against the window's limit.
         self.limit_5h_usd: float | None = _opt_float(os.environ.get("MUSE_LIMIT_5H_USD"))
         self.limit_week_usd: float | None = _opt_float(os.environ.get("MUSE_LIMIT_WEEK_USD"))
+        # --- AI layer (headless `claude -p`) -----------------------------------
+        # Jobs share the user's Max-plan auth + 5h window, so the defaults are
+        # conservative: cheap-ish model, one job at a time, auto-digests off.
+        self.ai_claude_bin: str = os.environ.get("MUSE_AI_CLAUDE_BIN", "claude")
+        self.ai_model: str = os.environ.get("MUSE_AI_MODEL", "sonnet")
+        self.ai_timeout_seconds: int = int(os.environ.get("MUSE_AI_TIMEOUT_SECONDS", "300"))
+        self.ai_auto_digest: bool = os.environ.get("MUSE_AI_AUTO_DIGEST", "") in (
+            "1", "true", "yes",
+        )
+
+    @property
+    def ai_workdir(self) -> Path:
+        """Dedicated cwd for headless claude runs. Even with
+        --no-session-persistence the CLI drops a tiny ai-title stub transcript
+        under ~/.claude/projects/<encoded-cwd>/ — running from here lets the
+        session list filter those out by project_cwd."""
+        return self.db_path.parent / "ai"
 
     @property
     def projects_dir(self) -> Path:

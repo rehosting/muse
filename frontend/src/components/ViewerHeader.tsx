@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import type { SessionLineage, Thread } from "../api/types";
 import { formatTokens, shortModel } from "../util/format";
 import { sessionStats } from "../util/stats";
+import { api } from "../api/client";
+import AiActionButton from "./AiActionButton";
 import ExportMenu from "./ExportMdButton";
 import Breadcrumb, { type Crumb } from "./Breadcrumb";
 import ContextMeter from "./ContextMeter";
@@ -190,6 +192,14 @@ export default function ViewerHeader({
           )}
           {current.provider !== "codex" && current.provider !== "opencode" && (
             <ResumeButton cwd={current.project_cwd} sessionId={current.session_id} />
+          )}
+          {current.provider === "claude" && !inSubagent && (
+            <AiActionButton
+              label="✦ AI summary"
+              title="Generate a re-entry summary of this session (headless claude; lands as a note)"
+              enqueue={() => api.summarizeSession(current.session_id)}
+              onDone={() => window.dispatchEvent(new Event("muse:notes-refresh"))}
+            />
           )}
           {current.provider === "claude" && (
             <button

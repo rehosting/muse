@@ -21,7 +21,19 @@ from .config import get_settings
 from .alerts import AlertsWatcher
 from .autopilot.controller import AutopilotController
 from .mcp import build_mcp, set_service
-from .routers import autopilot, investigations, launch, notify, sessions, stream, worklog
+from .board import BoardTicker
+from .routers import (
+    ai,
+    autopilot,
+    board,
+    interact,
+    investigations,
+    launch,
+    notify,
+    sessions,
+    stream,
+    worklog,
+)
 from .services.events import EventBroker
 from .services.session_service import SessionService
 
@@ -51,6 +63,11 @@ async def lifespan(app: FastAPI):
     app.state.autopilot.start()
     app.state.alerts = AlertsWatcher(app.state.service)
     app.state.alerts.start()
+    # AI worker: single daemon thread executing headless `claude -p` jobs.
+    get_settings().ai_workdir.mkdir(parents=True, exist_ok=True)
+    app.state.service.ai_worker.start()
+    # Board ticker: demand-driven; starts when the board page connects.
+    app.state.board = BoardTicker(app.state.service, broker)
     lifecycle.write_pidfile(app.state.started_at)  # last startup step (we own the port now)
     # The mounted MCP sub-app's lifespan is NOT run by Starlette, so run its
     # session manager here (required even in stateless_http mode).
@@ -59,6 +76,8 @@ async def lifespan(app: FastAPI):
             yield
         finally:
             await app.state.alerts.stop()
+            await app.state.board.stop()
+            app.state.service.ai_worker.stop()  # kills any in-flight claude -p
             await app.state.service.tailers.stop_all()
             # Checkpoint+truncate the WAL on a still-open connection before closing.
             db.checkpoint(app.state.service.store._conn)
@@ -71,6 +90,8 @@ async def lifespan(app: FastAPI):
             app.state.service.health.close()
             app.state.service.usage_history.close()
             app.state.service.packs.close()
+            app.state.service.ai_jobs.close()
+            app.state.service.git_index.close()
             await app.state.autopilot.stop()
             lifecycle.remove_pidfile()
 
@@ -93,6 +114,9 @@ def create_app() -> FastAPI:
     app.include_router(investigations.router)
     app.include_router(worklog.router)
     app.include_router(launch.router)
+    app.include_router(ai.router)
+    app.include_router(board.router)
+    app.include_router(interact.router)
 
     # MCP server (Streamable HTTP) on the same process → tool calls share state
     # with the web UI. The sub-app serves at /mcp/; redirect the canonical bare
@@ -115,6 +139,20 @@ def create_app() -> FastAPI:
             "watching": app.state.service.tailers.watching(),
             **lifecycle.version_info(started_at),
         }
+
+    @app.get("/api/debug/stacks", include_in_schema=False)
+    def debug_stacks() -> dict:
+        """Stack of every thread — for diagnosing CPU burn without ptrace
+        (py-spy needs elevated perms under yama ptrace_scope=1)."""
+        import sys
+        import threading as _threading
+        import traceback
+
+        names = {t.ident: t.name for t in _threading.enumerate()}
+        out = {}
+        for tid, frame in sys._current_frames().items():
+            out[f"{names.get(tid, '?')}-{tid}"] = traceback.format_stack(frame)
+        return out
 
     @app.get("/api/version")
     def version() -> dict:

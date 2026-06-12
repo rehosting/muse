@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { InvestigationSummary } from "../api/types";
 import { relativeTime } from "../util/format";
 import { usePolling } from "../hooks/usePolling";
+import AiActionButton from "../components/AiActionButton";
 
 type Tab = "all" | "investigation" | "retro";
 
@@ -63,6 +64,16 @@ export default function InvestigationsPage() {
             </button>
           ))}
         </div>
+        <AiActionButton
+          label="✦ Draft weekly retro"
+          title="AI retrospective of the current week's sessions (headless claude; lands under Retros)"
+          enqueue={() => api.generateWeeklyRetro()}
+          onDone={(job) => {
+            const ref = job.result?.output_ref;
+            if (ref?.type === "investigation") navigate(`/investigations/${ref.id}`);
+            else load();
+          }}
+        />
         <button className="action-btn primary" onClick={create}>
           + New
         </button>

@@ -31,6 +31,9 @@ export default function App() {
         <NavLink to="/files" className="nav-link">
           Files
         </NavLink>
+        <NavLink to="/ask" className="nav-link">
+          Ask
+        </NavLink>
         <NavLink to="/stats" className="nav-link">
           Stats
         </NavLink>

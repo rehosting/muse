@@ -104,6 +104,13 @@ def _scan_file(jsonl: Path, project_dir: str) -> Optional[SessionSummary]:
     return summary
 
 
+def apply_state(summary: SessionSummary, mtime: float) -> None:
+    """Public re-application of the time-dependent state fields. The board
+    ticker calls this every tick on (copies of) cached summaries so live→waiting
+    flips show within seconds instead of waiting out the list cache TTL."""
+    _apply_state(summary, mtime)
+
+
 def _first_user_text(obj: dict[str, Any]) -> Optional[str]:
     content = obj.get("message", {}).get("content")
     if isinstance(content, str):

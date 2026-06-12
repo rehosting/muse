@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -239,3 +241,22 @@ def get_tool_result(
     if result is None:
         raise HTTPException(status_code=404, detail="tool result not found")
     return result
+
+
+# --- code provenance (git commits ↔ sessions) -----------------------------------
+_HASH_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+@router.get("/sessions/{session_id}/commits")
+def session_commits(session_id: str, request: Request) -> list[dict]:
+    """Commits this session likely produced (evidence-based: time window +
+    file overlap + branch — see each row's `basis`/`confidence`)."""
+    return _service(request).get_session_commits(session_id)
+
+
+@router.get("/commits/search")
+def commit_search(request: Request, q: str = Query(..., min_length=7)) -> list[dict]:
+    """Reverse lookup: commit hash (≥7 hex chars) → candidate source sessions."""
+    if not _HASH_RE.match(q):
+        raise HTTPException(status_code=400, detail="q must be a 7-40 char hex hash prefix")
+    return _service(request).find_sessions_for_commit(q)

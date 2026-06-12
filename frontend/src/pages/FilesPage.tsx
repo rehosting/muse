@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { FileActivityGroup, FileHit } from "../api/types";
+import type { CommitSearchHit, FileActivityGroup, FileHit } from "../api/types";
 import { relativeTime } from "../util/format";
+
+const HASH_RE = /^[0-9a-f]{7,40}$/i;
 
 /** Cross-session file history: search any file ever touched by a session, then
  * expand it to see every session that read/edited/wrote it — each op deep-links
@@ -12,15 +14,23 @@ export default function FilesPage() {
   const [hits, setHits] = useState<FileHit[] | null>(null);
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [activity, setActivity] = useState<FileActivityGroup[] | null>(null);
+  const [commitHits, setCommitHits] = useState<CommitSearchHit[] | null>(null);
 
   useEffect(() => {
     const query = q.trim();
     if (query.length < 2) {
       setHits(null);
+      setCommitHits(null);
       return;
     }
     const t = setTimeout(() => {
       api.searchFiles(query).then(setHits).catch(() => setHits([]));
+      // A hex string ≥7 chars might be a commit hash → provenance lookup too.
+      if (HASH_RE.test(query)) {
+        api.searchCommits(query).then(setCommitHits).catch(() => setCommitHits(null));
+      } else {
+        setCommitHits(null);
+      }
     }, 250);
     return () => clearTimeout(t);
   }, [q]);
@@ -46,12 +56,28 @@ export default function FilesPage() {
       <input
         className="notes-quick-add journal-add"
         autoFocus
-        placeholder="Search by filename or path substring… (e.g. NOTES.md, config.yaml)"
+        placeholder="Search by filename, path substring… or a commit hash (≥7 hex chars) to find its source session"
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
 
-      {hits !== null && hits.length === 0 && (
+      {commitHits && commitHits.length > 0 && (
+        <div className="commit-hits">
+          <h3 className="journal-session-title">⎘ Commit → likely source session</h3>
+          {commitHits.map((c) => (
+            <div className="file-session" key={`${c.commit_hash}-${c.session_id}`}>
+              <span className={`commit-conf conf-${c.confidence}`}>{c.confidence}</span>
+              <code className="commit-hash-inline">{c.commit_hash.slice(0, 10)}</code>
+              <span className="commit-subject">{c.subject}</span>
+              <Link to={`/sessions/${c.session_id}`} className="file-session-title">
+                {c.title ?? c.session_id.slice(0, 8)} →
+              </Link>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {hits !== null && hits.length === 0 && (commitHits?.length ?? 0) === 0 && (
         <div className="empty">No indexed file activity matches "{q}".</div>
       )}
 

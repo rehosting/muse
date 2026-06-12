@@ -101,12 +101,15 @@ class WorklogStore:
         anchor_uuid: Optional[str] = None,
         kind: str = "note",
         author: str = "user",
+        day: Optional[str] = None,
     ) -> Note:
         note_id = _new_id()
         now = _now()
         kind = kind if kind in _KINDS else "note"
         author = author if author in ("user", "ai") else "user"
-        day = _today()
+        # `day` override: AI digests of yesterday must land on yesterday's
+        # journal page, not the day the job happened to run.
+        day = day or _today()
 
         def work():
             self._conn.execute(

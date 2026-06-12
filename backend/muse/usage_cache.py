@@ -143,6 +143,98 @@ def _agent_type(sub_path: Path) -> str:
     return at
 
 
+def context_pcts(scan: Scan) -> dict[str, float]:
+    """Latest main-thread context size as a % of the model window, per session.
+    (Lifted out of AutopilotController so the board ticker shares it.)"""
+    latest: dict[str, tuple[datetime, int]] = {}
+    peak: dict[str, int] = {}
+    for e in scan.events:
+        if e.is_subagent or e.ts is None or e.context <= 0:
+            continue
+        cur = latest.get(e.sid)
+        if cur is None or e.ts > cur[0]:
+            latest[e.sid] = (e.ts, e.context)
+        peak[e.sid] = max(peak.get(e.sid, 0), e.context)
+    out = {}
+    for sid, (_ts, ctx) in latest.items():
+        window = 1_000_000 if peak[sid] > 200_000 else 200_000
+        out[sid] = 100.0 * ctx / window
+    return out
+
+
+# Per-FILE aggregate cache keyed by mtime: when a live session appends, only
+# that file's events are re-summed — the rest of the corpus is a dict lookup.
+# (A corpus-generation key was tried first and was a trap: any live append
+# invalidated it, so every 3s board tick re-summed ~all events + priced each.)
+# path -> (mtime, sid, work_tokens, cost_usd, latest_main_ts, latest_main_ctx,
+#          peak_main_ctx)
+_file_agg_cache: dict[Path, tuple] = {}
+
+
+def _file_aggregate(path: Path, events: list[Event]) -> tuple:
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    cached = _file_agg_cache.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached
+    from .pricing import cost_usd  # local import: avoid cycle at module load
+
+    sid = events[0].sid if events else ""
+    tokens = 0
+    cost = 0.0
+    latest_ts = None
+    latest_ctx = 0
+    peak_ctx = 0
+    for e in events:
+        tokens += e.input + e.output + e.cc  # real work (excl. cache reads)
+        cost += cost_usd(e.model, e.input, e.output, e.cc, e.cr)
+        if not e.is_subagent and e.ts is not None and e.context > 0:
+            if latest_ts is None or e.ts > latest_ts:
+                latest_ts, latest_ctx = e.ts, e.context
+            peak_ctx = max(peak_ctx, e.context)
+    agg = (mtime, sid, tokens, cost, latest_ts, latest_ctx, peak_ctx)
+    _file_agg_cache[path] = agg
+    return agg
+
+
+def board_rollup() -> tuple[dict[str, tuple[int, float]], dict[str, float]]:
+    """(sid -> (work_tokens, cost_usd), sid -> context_pct) for the board tick.
+    O(#files) per call thanks to the per-file mtime-keyed aggregate cache."""
+    projects = get_settings().projects_dir
+    aggs: dict[str, tuple[int, float]] = {}
+    latest: dict[str, tuple] = {}  # sid -> (ts, ctx)
+    peak: dict[str, int] = {}
+    if not projects.is_dir():
+        return aggs, {}
+
+    def feed(path: Path, sid: str, project: str, is_sub: bool, atype: str, aid: str = ""):
+        a = _file_aggregate(path, _file_events(path, sid, project, is_sub, atype, aid))
+        tokens, cost = aggs.get(sid, (0, 0.0))
+        aggs[sid] = (tokens + a[2], cost + a[3])
+        if a[4] is not None:
+            cur = latest.get(sid)
+            if cur is None or a[4] > cur[0]:
+                latest[sid] = (a[4], a[5])
+            peak[sid] = max(peak.get(sid, 0), a[6])
+
+    for project_dir in projects.iterdir():
+        if not project_dir.is_dir():
+            continue
+        for jsonl in project_dir.glob("*.jsonl"):
+            feed(jsonl, jsonl.stem, project_dir.name, False, "")
+        for sub in project_dir.glob("*/subagents/agent-*.jsonl"):
+            feed(sub, sub.parent.parent.name, project_dir.name, True,
+                 _agent_type(sub), sub.stem)
+
+    pcts = {}
+    for sid, (_ts, ctx) in latest.items():
+        window = 1_000_000 if peak.get(sid, 0) > 200_000 else 200_000
+        pcts[sid] = 100.0 * ctx / window
+    return aggs, pcts
+
+
 def scan_all() -> Scan:
     """All usage events across every session + subagent (mtime-cached per file)."""
     projects = get_settings().projects_dir

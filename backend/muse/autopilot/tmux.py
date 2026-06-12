@@ -70,6 +70,15 @@ def send_text(pane_id: str, text: str, submit: bool = True) -> tuple[bool, str]:
     return True, ""
 
 
+def send_key(pane_id: str, key: str) -> tuple[bool, str]:
+    """Send one named key (e.g. "Escape", "Enter") to a pane. Callers must
+    whitelist — arbitrary keys into a live session are destructive."""
+    if not pane_id:
+        return False, "no pane"
+    code, _, err = _run(["send-keys", "-t", pane_id, key])
+    return (code == 0), (err if code != 0 else "")
+
+
 def accept_suggestion(pane_id: str) -> tuple[bool, str]:
     """Accept Claude Code's inline autosuggestion (Right arrow) and submit (Enter).
 

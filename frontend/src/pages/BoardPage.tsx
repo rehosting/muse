@@ -1,116 +1,128 @@
-import { useCallback, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { api } from "../api/client";
-import type { SessionSummary } from "../api/types";
-import ResumeButton from "../components/ResumeButton";
-import StateBadge from "../components/StateBadge";
-import { relativeTime, shortModel } from "../util/format";
-import { usePolling } from "../hooks/usePolling";
+import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import type { BoardCard } from "../api/types";
+import SessionCard from "../components/board/SessionCard";
+import { useBoardStream } from "../hooks/useBoardStream";
 
-const STATE_ORDER: Record<SessionSummary["state"], number> = { live: 0, waiting: 1, stopped: 2 };
+/** Mission control: every recent session as a live card, triaged into
+ * Needs attention → Working → Stopped. One SSE connection feeds all cards
+ * (status, context %, activity line, health) — reply to a waiting session
+ * without leaving the page. */
 
-/** Live-updating monitor: sessions sorted by state (live → waiting → stopped),
- * then by most recent output. Select sessions to follow them together. */
+type Group = "attention" | "working" | "stopped";
+
+export function groupOf(c: BoardCard): Group {
+  if (c.state === "stopped") return "stopped";
+  if (
+    c.state === "waiting" ||
+    c.live_status === "waiting" ||
+    c.live_status === "idle" ||
+    c.waiting_for ||
+    c.health === "bad" ||
+    c.last_activity?.kind === "error"
+  ) {
+    return "attention";
+  }
+  return "working";
+}
+
 export default function BoardPage() {
-  const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { cards, live } = useBoardStream();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
 
-  const load = useCallback(
-    () => api.listSessions().then(setSessions).catch((e) => setError(String(e))),
-    [],
-  );
-  usePolling(load, 3000);
-
-  const sorted = useMemo(() => {
-    if (!sessions) return [];
-    return [...sessions].sort(
-      (a, b) =>
-        STATE_ORDER[a.state] - STATE_ORDER[b.state] || b.mtime.localeCompare(a.mtime),
-    );
-  }, [sessions]);
+  const groups = useMemo(() => {
+    const g: Record<Group, BoardCard[]> = { attention: [], working: [], stopped: [] };
+    for (const c of cards ?? []) g[groupOf(c)].push(c);
+    return g;
+  }, [cards]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
 
-  const follow = () => {
-    if (selected.size) navigate(`/follow?sessions=${[...selected].join(",")}`);
-  };
+  const liveIds = (cards ?? [])
+    .filter((c) => c.state === "live")
+    .map((c) => c.session_id);
 
-  const liveIds = (sessions ?? []).filter((s) => s.state === "live").map((s) => s.session_id);
-  const followAllLive = () => {
-    if (liveIds.length) navigate(`/follow?sessions=${liveIds.join(",")}`);
-  };
-
-  if (error)
+  if (!cards) {
     return (
       <div className="list-wrap">
-        <div className="error-banner">{error}</div>
+        <div className="empty">Loading…</div>
       </div>
     );
-  if (!sessions) return <div className="list-wrap"><div className="empty">Loading…</div></div>;
-
-  const counts = {
-    live: sessions.filter((s) => s.state === "live").length,
-    waiting: sessions.filter((s) => s.state === "waiting").length,
-    stopped: sessions.filter((s) => s.state === "stopped").length,
-  };
+  }
 
   return (
-    <div className="list-wrap">
+    <div className="list-wrap board-wrap">
       <div className="board-head">
         <h2 className="list-heading">
-          Monitor · <span className="state-live-txt">{counts.live} live</span> ·{" "}
-          <span className="state-waiting-txt">{counts.waiting} waiting</span> ·{" "}
-          <span className="state-stopped-txt">{counts.stopped} stopped</span>
+          Mission control
+          <span className={`board-conn ${live ? "board-conn-live" : ""}`}
+            title={live ? "live (SSE)" : "polling fallback"}>
+            {live ? "● live" : "○ polling"}
+          </span>
         </h2>
         <div className="board-actions">
           <button
             className="action-btn follow-live-btn"
             disabled={!liveIds.length}
-            onClick={followAllLive}
+            onClick={() => navigate(`/follow?sessions=${liveIds.join(",")}`)}
             title="Open a live-tailing pane for every live session"
           >
             ● Follow all live ({liveIds.length})
           </button>
-          <button className="action-btn follow-btn" disabled={!selected.size} onClick={follow}>
+          <button
+            className="action-btn follow-btn"
+            disabled={!selected.size}
+            onClick={() => navigate(`/follow?sessions=${[...selected].join(",")}`)}
+          >
             Follow selected ({selected.size}) →
           </button>
         </div>
       </div>
 
-      <table className="board-table">
-        <tbody>
-          {sorted.map((s) => (
-            <tr key={s.session_id} className={`board-row board-${s.state}`}>
-              <td className="board-check">
-                <input
-                  type="checkbox"
-                  checked={selected.has(s.session_id)}
-                  onChange={() => toggle(s.session_id)}
-                />
-              </td>
-              <td className="board-state">
-                <StateBadge state={s.state} />
-              </td>
-              <td className="board-title">
-                <Link to={`/sessions/${s.session_id}`}>{s.title}</Link>
-                <div className="board-project">{s.project_cwd ?? s.project_dir}</div>
-              </td>
-              <td className="board-time">{relativeTime(s.mtime)}</td>
-              <td className="board-model">{s.model ? shortModel(s.model) : ""}</td>
-              <td className="board-actions">
-                <ResumeButton cwd={s.project_cwd} sessionId={s.session_id} />
-              </td>
-            </tr>
+      {groups.attention.length > 0 && (
+        <section className="board-group">
+          <h3 className="board-group-title attention">
+            ✋ Needs attention ({groups.attention.length})
+          </h3>
+          {groups.attention.map((c) => (
+            <SessionCard key={c.session_id} card={c}
+              selected={selected.has(c.session_id)} onToggle={toggle} />
           ))}
-        </tbody>
-      </table>
+        </section>
+      )}
+
+      {groups.working.length > 0 && (
+        <section className="board-group">
+          <h3 className="board-group-title working">
+            ● Working ({groups.working.length})
+          </h3>
+          {groups.working.map((c) => (
+            <SessionCard key={c.session_id} card={c}
+              selected={selected.has(c.session_id)} onToggle={toggle} />
+          ))}
+        </section>
+      )}
+
+      {groups.attention.length === 0 && groups.working.length === 0 && (
+        <div className="empty">No active sessions — everything below is history.</div>
+      )}
+
+      <details className="board-stopped">
+        <summary className="board-group-title stopped">
+          ⏹ Stopped recently ({groups.stopped.length})
+        </summary>
+        {groups.stopped.map((c) => (
+          <SessionCard key={c.session_id} card={c}
+            selected={selected.has(c.session_id)} onToggle={toggle} />
+        ))}
+      </details>
     </div>
   );
 }

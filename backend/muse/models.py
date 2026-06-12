@@ -246,6 +246,76 @@ class Pack(BaseModel):
     created_at: Optional[str] = None
 
 
+class BoardActivity(BaseModel):
+    """The last meaningful thing a session did (extracted incrementally from
+    appended transcript bytes — never a full parse)."""
+
+    kind: str = ""  # assistant_text | tool_call | user | error
+    text: str = ""
+    tool: Optional[str] = None
+    ts: Optional[datetime] = None
+
+
+class BoardCard(BaseModel):
+    """One session on the mission-control board."""
+
+    session_id: str
+    provider: str = "claude"
+    title: str = ""
+    project_cwd: Optional[str] = None
+    state: Literal["live", "waiting", "stopped"] = "stopped"
+    live_status: Optional[str] = None  # busy | idle | waiting (from the live pid map)
+    waiting_for: Optional[str] = None
+    has_pane: bool = False
+    pane_id: Optional[str] = None
+    context_pct: Optional[float] = None
+    total_tokens: int = 0  # real work tokens (excl. cache reads)
+    cost_usd: float = 0.0
+    health: Optional[Literal["ok", "warn", "bad"]] = None
+    health_flags: list[str] = Field(default_factory=list)
+    last_activity: Optional[BoardActivity] = None
+    # No idle_seconds field on purpose: it would change every tick and make
+    # every card "updated" in the SSE diff — the client derives idle from mtime.
+    mtime: datetime
+    model: Optional[str] = None
+    git_branch: Optional[str] = None
+    agent_kind: Optional[str] = None
+
+
+class BoardSnapshot(BaseModel):
+    generated_at: datetime
+    cards: list[BoardCard] = Field(default_factory=list)
+
+
+class AIJob(BaseModel):
+    """A queued/running/finished headless `claude -p` job (ask, summary, digest,
+    retro). Stored in ~/.muse/muse.db; executed one-at-a-time by the AI worker."""
+
+    id: str
+    kind: str  # ask | session_summary | daily_digest | weekly_retro
+    params: dict = Field(default_factory=dict)
+    status: str = "queued"  # queued | running | done | error | cancelled
+    result: Optional[dict] = None  # {answer_md, output_ref?: {type, id}}
+    error: Optional[str] = None
+    model: Optional[str] = None
+    cost_usd: Optional[float] = None
+    duration_ms: Optional[int] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class AIStatus(BaseModel):
+    """Health of the AI layer: is the claude CLI reachable, what's queued."""
+
+    available: bool = False
+    model: str = ""
+    queued: int = 0
+    running: int = 0
+    total_cost_usd: float = 0.0
+    last_error: Optional[str] = None
+
+
 class AgentTypeStat(BaseModel):
     """Spend split by subagent type ('main thread' = the top-level session)."""
 

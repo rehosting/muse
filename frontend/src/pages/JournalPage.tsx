@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { Journal, Note } from "../api/types";
 import { relativeTime } from "../util/format";
+import AiActionButton from "../components/AiActionButton";
 
 const KIND_ICON: Record<string, string> = { note: "📝", next: "⏭", brief: "🧭" };
 
@@ -122,6 +123,13 @@ export default function JournalPage() {
             Today
           </button>
         )}
+        <span className="journal-spacer" />
+        <AiActionButton
+          label="✦ Generate digest"
+          title={`AI 'what happened on ${day}' journal entry (headless claude; lands as a note)`}
+          enqueue={() => api.generateDailyDigest(day)}
+          onDone={load}
+        />
       </div>
 
       <input

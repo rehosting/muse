@@ -221,6 +221,23 @@ class AutopilotStore:
 
         db.retry_locked(_do)
 
+    def recent_log_for(self, sid: str, limit: int = 20) -> list[AutopilotLogEntry]:
+        """One session's send history (autopilot injections + manual board sends)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM autopilot_log WHERE session_id=? ORDER BY ts DESC LIMIT ?",
+                (sid, limit),
+            ).fetchall()
+        return [
+            AutopilotLogEntry(
+                ts=_dt(r["ts"]) or datetime.now(timezone.utc),
+                session_id=r["session_id"],
+                action=r["action"],
+                detail=r["detail"] or "",
+            )
+            for r in rows
+        ]
+
     def recent_log(self, limit: int = 50) -> list[AutopilotLogEntry]:
         with self._lock:
             rows = self._conn.execute(

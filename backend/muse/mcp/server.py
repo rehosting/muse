@@ -463,6 +463,54 @@ def build_mcp() -> FastMCP:
         )
         return {"id": pack.id, "path": pack.path, "title": pack.title}
 
+    # ---- code provenance (git commits ↔ sessions) -----------------------
+    @mcp.tool()
+    async def get_session_commits(session_id: str) -> str:
+        """Git commits this session likely produced. EVIDENCE-BASED linkage
+        (commit time inside the session's activity window + file overlap +
+        branch), NOT authorship proof — check each row's confidence/basis.
+        Inspect a commit with `git -C <repo> show <hash>`."""
+        rows = await _to_thread(_svc().get_session_commits, session_id)
+        if not rows:
+            return "(no commits linked to this session — repo unharvested, or none in window)"
+        out = []
+        for r in rows[:30]:
+            basis = r.get("basis") or {}
+            why = []
+            if basis.get("in_window"):
+                why.append("in-window")
+            if basis.get("slack"):
+                why.append("just-after")
+            if basis.get("coverage") is not None:
+                why.append(f"files {int(basis['coverage'] * 100)}%")
+            if basis.get("branch_match"):
+                why.append(f"branch={basis['branch_match']}")
+            out.append(
+                f"{r['commit_hash'][:10]} | {str(r.get('committer_date') or '')[:19]} | "
+                f"{r['confidence']} | {r.get('subject') or ''} | "
+                f"{r.get('file_count', 0)} files | {', '.join(why)}"
+            )
+        return "\n".join(out)
+
+    @mcp.tool()
+    async def find_session_for_commit(commit_hash: str) -> str:
+        """Which session(s) likely produced a commit (hash prefix ≥7 chars).
+        Same evidence-based caveat as get_session_commits. Returns sessions
+        ranked by match score with muse deep links."""
+        if len(commit_hash) < 7:
+            return "(need at least 7 hash characters)"
+        rows = await _to_thread(_svc().find_sessions_for_commit, commit_hash)
+        if not rows:
+            return f"(no sessions linked to {commit_hash!r})"
+        out = []
+        for r in rows[:10]:
+            out.append(
+                f"{r['session_id']} ({r.get('title') or '?'}) | {r['confidence']} "
+                f"score={r['score']:.1f} | {r.get('subject') or ''} | "
+                f"{_ui_url('/sessions/' + r['session_id'])}"
+            )
+        return "\n".join(out)
+
     # ---- worklog notes -------------------------------------------------
     @mcp.tool()
     async def add_note(

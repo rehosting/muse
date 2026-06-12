@@ -430,6 +430,101 @@ export interface LaunchResult {
   command: string;
 }
 
+export interface SessionCommit {
+  repo: string;
+  commit_hash: string;
+  score: number;
+  confidence: "high" | "medium" | "low";
+  basis: {
+    in_window?: boolean;
+    slack?: boolean;
+    coverage?: number;
+    shared_files?: string[];
+    branch_match?: string;
+  };
+  author: string | null;
+  committer_date: string | null;
+  subject: string | null;
+  ref_hint: string | null;
+  file_count: number;
+  files: string[];
+}
+
+export interface CommitSearchHit {
+  session_id: string;
+  title?: string;
+  score: number;
+  confidence: "high" | "medium" | "low";
+  repo: string;
+  commit_hash: string;
+  subject: string | null;
+  committer_date: string | null;
+  author: string | null;
+}
+
+export interface BoardActivity {
+  kind: "assistant_text" | "tool_call" | "user" | "error" | "";
+  text: string;
+  tool: string | null;
+  ts: string | null;
+}
+
+export interface BoardCard {
+  session_id: string;
+  provider: string;
+  title: string;
+  project_cwd: string | null;
+  state: "live" | "waiting" | "stopped";
+  live_status: string | null; // busy | idle | waiting (live pid map)
+  waiting_for: string | null;
+  has_pane: boolean;
+  pane_id: string | null;
+  context_pct: number | null;
+  total_tokens: number;
+  cost_usd: number;
+  health: "ok" | "warn" | "bad" | null;
+  health_flags: string[];
+  last_activity: BoardActivity | null;
+  mtime: string;
+  model: string | null;
+  git_branch: string | null;
+}
+
+export interface BoardSnapshot {
+  generated_at: string;
+  cards: BoardCard[];
+}
+
+export type AIJobKind = "ask" | "session_summary" | "daily_digest" | "weekly_retro";
+export type AIJobStatus = "queued" | "running" | "done" | "error" | "cancelled";
+
+export interface AIJob {
+  id: string;
+  kind: AIJobKind;
+  params: Record<string, string>;
+  status: AIJobStatus;
+  result: {
+    answer_md?: string;
+    output_ref?: { type: "note" | "investigation"; id: string };
+  } | null;
+  error: string | null;
+  model: string | null;
+  cost_usd: number | null;
+  duration_ms: number | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface AIStatus {
+  available: boolean;
+  model: string;
+  queued: number;
+  running: number;
+  total_cost_usd: number;
+  last_error: string | null;
+}
+
 export interface OpenLoop {
   summary: SessionSummary;
   last_user_label: string | null;

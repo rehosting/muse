@@ -13,7 +13,7 @@ from typing import Optional
 from .. import discovery as session_discovery
 from ..config import get_settings
 from ..models import AutopilotConfig, AutopilotSession, AutopilotState
-from ..usage_cache import scan_all
+from ..usage_cache import context_pcts, scan_all
 from . import sessions as live_discovery
 from . import tmux
 from .resettime import parse_reset_time
@@ -151,22 +151,9 @@ class AutopilotController:
             except asyncio.TimeoutError:
                 pass
 
-    @staticmethod
-    def _context_pcts(scan) -> dict[str, float]:
-        latest: dict[str, tuple[datetime, int]] = {}
-        peak: dict[str, int] = {}
-        for e in scan.events:
-            if e.is_subagent or e.ts is None or e.context <= 0:
-                continue
-            cur = latest.get(e.sid)
-            if cur is None or e.ts > cur[0]:
-                latest[e.sid] = (e.ts, e.context)
-            peak[e.sid] = max(peak.get(e.sid, 0), e.context)
-        out = {}
-        for sid, (_ts, ctx) in latest.items():
-            window = 1_000_000 if peak[sid] > 200_000 else 200_000
-            out[sid] = 100.0 * ctx / window
-        return out
+    # Context % computation lives in usage_cache.context_pcts (shared with the
+    # board ticker).
+    _context_pcts = staticmethod(context_pcts)
 
     def _tick(self) -> None:
         if not self.store.is_armed() or not self._within_hours():
