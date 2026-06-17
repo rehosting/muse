@@ -14,9 +14,9 @@ import os
 import time
 
 from fastapi import APIRouter, Request
-from sse_starlette.sse import EventSourceResponse
 
 from ..models import BoardSnapshot
+from ..sse import SafeEventSourceResponse
 
 router = APIRouter(prefix="/api", tags=["board"])
 
@@ -60,4 +60,4 @@ async def stream_board(request: Request):
             await broker.unsubscribe("board", queue)
             await board.release()
 
-    return EventSourceResponse(event_generator(), ping=HEARTBEAT_SECONDS)
+    return SafeEventSourceResponse(event_generator(), ping=HEARTBEAT_SECONDS)
