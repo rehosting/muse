@@ -193,6 +193,27 @@ def create_app() -> FastAPI:
             }
         return out
 
+    @app.get("/api/debug/loop", include_in_schema=False)
+    async def debug_loop() -> dict:
+        """Event-loop internals — call this WHILE CPU is pegged to find a spin the
+        task/thread dumps can't see. `ready` constantly non-empty => a callback
+        re-scheduling itself; a selector fd count far above the live connection
+        count => a half-closed fd the loop keeps waking on (the suspected cause of
+        the 100%-CPU spin under proxy use)."""
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        try:
+            fdmap = loop._selector.get_map() or {}  # type: ignore[attr-defined]
+        except Exception:
+            fdmap = {}
+        return {
+            "ready": len(getattr(loop, "_ready", [])),
+            "scheduled": len(getattr(loop, "_scheduled", [])),
+            "selector_fds": len(fdmap),
+            "tasks": len(asyncio.all_tasks()),
+        }
+
     @app.get("/api/version")
     def version() -> dict:
         """Running code's version + git sha + uptime — compare git_sha to the

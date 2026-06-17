@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
 
 from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
@@ -19,6 +21,9 @@ from ..models import BoardSnapshot
 router = APIRouter(prefix="/api", tags=["board"])
 
 HEARTBEAT_SECONDS = 15
+# See stream.py: bound the stream's life so a proxy-half-closed connection can't
+# linger (and spin the event loop) for hours. EventSource reconnects silently.
+SSE_MAX_SECONDS = int(os.environ.get("MUSE_SSE_MAX_SECONDS", "300"))
 
 
 @router.get("/board", response_model=BoardSnapshot)
@@ -39,9 +44,12 @@ async def stream_board(request: Request):
         # receive channel from sse_starlette's disconnect listener, so the stream
         # is never cancelled on disconnect and `finally` never releases the board
         # ticker / subscription — a leak that pegs the event loop over time.
+        deadline = time.monotonic() + SSE_MAX_SECONDS if SSE_MAX_SECONDS else None
         try:
             yield {"event": "snapshot", "data": snapshot.model_dump_json()}
             while True:
+                if deadline and time.monotonic() > deadline:
+                    break  # bounded lifetime — client reconnects, half-open conns get reaped
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)
                 except asyncio.TimeoutError:
