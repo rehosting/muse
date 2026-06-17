@@ -9,6 +9,7 @@ import ExportMenu from "./ExportMdButton";
 import Breadcrumb, { type Crumb } from "./Breadcrumb";
 import ContextMeter from "./ContextMeter";
 import ResumeButton from "./ResumeButton";
+import RelatedSessions from "./RelatedSessions";
 import SubagentTree, { type SubNode } from "./SubagentTree";
 
 export type LayoutMode = 1 | 2 | 3;
@@ -190,6 +191,7 @@ export default function ViewerHeader({
               )}
             </div>
           )}
+          {!inSubagent && <RelatedSessions sessionId={current.session_id} />}
           {current.provider !== "codex" && current.provider !== "opencode" && (
             <ResumeButton cwd={current.project_cwd} sessionId={current.session_id} />
           )}

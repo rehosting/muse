@@ -12,7 +12,10 @@ import type {
 } from "../api/types";
 import CommitsPanel from "../components/CommitsPanel";
 import type { Crumb } from "../components/Breadcrumb";
-import ConversationView, { type SelectSource } from "../components/ConversationView";
+import ConversationView, {
+  type ConversationHandle,
+  type SelectSource,
+} from "../components/ConversationView";
 import EventTimeline from "../components/EventTimeline";
 import EventDetail from "../components/EventDetail";
 import FileChanges from "../components/FileChanges";
@@ -22,7 +25,6 @@ import ViewerHeader, { type LayoutMode } from "../components/ViewerHeader";
 import SessionBacklinks from "../components/SessionBacklinks";
 import NotesPanel from "../components/NotesPanel";
 import ReentryBanner from "../components/ReentryBanner";
-import RelatedSessions from "../components/RelatedSessions";
 import HealthBar from "../components/HealthBar";
 import { type SubNode } from "../components/SubagentTree";
 import ResizableSplit from "../components/ResizableSplit";
@@ -58,6 +60,9 @@ export default function SessionViewPage() {
   const [scrollNonce, setScrollNonce] = useState(0);
   const convScrollRef = useRef<HTMLDivElement>(null);
   const logScrollRef = useRef<HTMLDivElement>(null);
+  // Imperative scroll into the (virtualized) conversation — the target item may
+  // not be mounted, so these expand the window then scroll the real element.
+  const convViewRef = useRef<ConversationHandle>(null);
 
   // Annotations (renames + bookmarks) live in muse's own DB, keyed by uuid.
   const [bookmarks, setBookmarks] = useState<Record<string, string>>({});
@@ -164,10 +169,10 @@ export default function SessionViewPage() {
   // activity streams in.
   useEffect(() => {
     if (scrollNonce === 0) return;
+    convViewRef.current?.scrollToBottom();
     requestAnimationFrame(() => {
-      for (const el of [convScrollRef.current, logScrollRef.current]) {
-        el?.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-      }
+      const el = logScrollRef.current;
+      el?.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     });
   }, [scrollNonce]);
 
@@ -225,6 +230,17 @@ export default function SessionViewPage() {
     [layout],
   );
 
+  // Scroll the conversation to a message (or its tool) from an external panel
+  // (backlinks, notes, health, re-entry, timeline). A tool uuid routes through
+  // selection so the detail pane opens too.
+  const focusInConversation = useCallback(
+    (uuid: string) => {
+      if (toolsById.has(uuid)) selectTool(uuid, "log");
+      else convViewRef.current?.scrollToUuid(uuid, "center");
+    },
+    [toolsById, selectTool],
+  );
+
   // Deep link: ?focus=<message uuid | tool_use_id> selects + scrolls on load.
   const focus = searchParams.get("focus");
   const focusedRef = useRef<string | null>(null);
@@ -232,10 +248,7 @@ export default function SessionViewPage() {
     if (!focus || !current || events.length === 0) return;
     if (focusedRef.current === focus) return;
     focusedRef.current = focus;
-    requestAnimationFrame(() => {
-      if (toolsById.has(focus)) selectTool(focus, "log");
-      else convItemRefs.current.get(focus)?.scrollIntoView({ block: "center" });
-    });
+    requestAnimationFrame(() => focusInConversation(focus));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, current, events.length]);
 
@@ -264,12 +277,7 @@ export default function SessionViewPage() {
     // Scroll the conversation to the selected tool (the timeline scrolls itself
     // to a selected tool via its own selectedToolId effect).
     if (selectSource !== "conversation") {
-      requestAnimationFrame(() => {
-        convToolRefs.current.get(selectedToolId)?.scrollIntoView({
-          block: "center",
-          behavior: "smooth",
-        });
-      });
+      convViewRef.current?.scrollToTool(selectedToolId, "center");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectNonce]);
@@ -372,11 +380,7 @@ export default function SessionViewPage() {
       setSelectedToolId(null);
       setSelectedEvent(ev);
       if (layout === 1) setOverlayOpen(true);
-      if (ev.anchor_uuid) {
-        convItemRefs.current
-          .get(ev.anchor_uuid)
-          ?.scrollIntoView({ block: "center", behavior: "smooth" });
-      }
+      if (ev.anchor_uuid) convViewRef.current?.scrollToUuid(ev.anchor_uuid, "center");
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectTool, toolsById, layout],
@@ -385,15 +389,15 @@ export default function SessionViewPage() {
   if (error) return <div className="error-banner">{error}</div>;
   if (!main || !current) return <div className="empty">Loading session…</div>;
 
-  const jumpToBottom = () => {
-    const el = convScrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  };
+  const jumpToBottom = () => convViewRef.current?.scrollToBottom();
   const conversation = (
     <div className="panel panel-conversation">
       <div className="panel-label">Conversation</div>
       <div className="panel-scroll" ref={convScrollRef}>
         <ConversationView
+          ref={convViewRef}
+          virtualize
+          scrollParentRef={convScrollRef}
           items={current.items}
           cwd={current.project_cwd}
           model={current.model ?? firstModel(current)}
@@ -516,48 +520,14 @@ export default function SessionViewPage() {
 
       {sessionId && agentStack.length === 0 && (
         <>
-          <SessionBacklinks
-            sessionId={sessionId}
-            onFocus={(uuid) => {
-              if (toolsById.has(uuid)) selectTool(uuid, "log");
-              else
-                convItemRefs.current
-                  .get(uuid)
-                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
-            }}
-          />
-          <NotesPanel
-            sessionId={sessionId}
-            onFocus={(uuid) => {
-              if (toolsById.has(uuid)) selectTool(uuid, "log");
-              else
-                convItemRefs.current
-                  .get(uuid)
-                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
-            }}
-          />
-          <RelatedSessions sessionId={sessionId} />
-          <HealthBar
-            sessionId={sessionId}
-            onFocus={(uuid) => {
-              if (toolsById.has(uuid)) selectTool(uuid, "log");
-              else
-                convItemRefs.current
-                  .get(uuid)
-                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
-            }}
-          />
+          <SessionBacklinks sessionId={sessionId} onFocus={focusInConversation} />
+          <NotesPanel sessionId={sessionId} onFocus={focusInConversation} />
+          <HealthBar sessionId={sessionId} onFocus={focusInConversation} />
           <ReentryBanner
             sessionId={sessionId}
             provider={current.provider}
             cwd={current.project_cwd}
-            onFocus={(uuid) => {
-              if (toolsById.has(uuid)) selectTool(uuid, "log");
-              else
-                convItemRefs.current
-                  .get(uuid)
-                  ?.scrollIntoView({ block: "center", behavior: "smooth" });
-            }}
+            onFocus={focusInConversation}
           />
         </>
       )}
