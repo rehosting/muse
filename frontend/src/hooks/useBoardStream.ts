@@ -61,6 +61,16 @@ export function useBoardStream(): {
         es = null;
         sseUpRef.current = false;
         setSseUp(false);
+        // EventSource hides status codes — probe; a 401 means login is needed
+        // (LoginGate listens) rather than endless reconnects.
+        fetch("/api/auth/status")
+          .then((r) => r.json())
+          .then((s) => {
+            if (s.auth_required && !s.authenticated) {
+              window.dispatchEvent(new Event("muse:auth-required"));
+            }
+          })
+          .catch(() => undefined);
         if (!stopped) retry = window.setTimeout(connect, 5000);
       };
     };

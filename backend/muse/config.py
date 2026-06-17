@@ -75,6 +75,43 @@ class Settings:
         self.ai_auto_digest: bool = os.environ.get("MUSE_AI_AUTO_DIGEST", "") in (
             "1", "true", "yes",
         )
+        # Daily cap on AI spend from autopilot's "ai" idle mode (USD). The mode
+        # types AI-drafted replies into live sessions, so it must be bounded;
+        # ≤0 disables ai mode entirely (drafts/diagnoses stay available — those
+        # are human-initiated).
+        self.ai_daily_budget_usd: float = float(
+            os.environ.get("MUSE_AI_DAILY_BUDGET_USD", "2.0")
+        )
+
+        # --- remote access -------------------------------------------------------
+        # Bearer/cookie token for non-loopback clients. Sourced from the env or
+        # ~/.muse/auth_token (auto-generated when binding non-loopback). With no
+        # token and a loopback bind, auth is entirely permissive (local default).
+        self._auth_token_env: str | None = os.environ.get("MUSE_AUTH_TOKEN") or None
+        self.auth_allow_loopback: bool = os.environ.get(
+            "MUSE_AUTH_ALLOW_LOOPBACK", "1"
+        ) not in ("0", "false", "no")
+        # Public base URL (e.g. http://devbox.tailnet.ts.net:8848) for links that
+        # leave this machine: ntfy click-throughs, MCP-cited UI urls.
+        self.public_url: str | None = (
+            os.environ.get("MUSE_PUBLIC_URL", "").rstrip("/") or None
+        )
+
+    def resolve_auth_token(self) -> str | None:
+        """Env token, else ~/.muse/auth_token, generated iff binding non-loopback."""
+        from .auth import load_or_create_token
+
+        non_loopback = self.host not in ("127.0.0.1", "localhost", "::1")
+        return load_or_create_token(
+            self._auth_token_env, self.db_path.parent, generate=non_loopback
+        )
+
+    @property
+    def base_url(self) -> str:
+        """Where links that leave this machine should point. MUSE_PUBLIC_URL is
+        the knob for remote setups (the host:port fallback is wrong by
+        definition when binding 0.0.0.0)."""
+        return self.public_url or f"http://{self.host}:{self.port}"
 
     @property
     def ai_workdir(self) -> Path:

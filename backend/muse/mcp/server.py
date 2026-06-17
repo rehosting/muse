@@ -37,8 +37,7 @@ def _svc():
 
 
 def _ui_url(path: str) -> str:
-    s = get_settings()
-    return f"http://{s.host}:{s.port}{path}"
+    return f"{get_settings().base_url}{path}"
 
 
 async def _to_thread(fn, *args):
