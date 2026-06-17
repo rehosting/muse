@@ -89,7 +89,12 @@ def _start() -> int:
             return 1
     import uvicorn  # imported lazily so `status`/`stop` don't need it
 
-    uvicorn.run("muse.main:app", host=s.host, port=s.port, log_level="warning")
+    # http="h11" (not the default httptools): httptools busy-loops at ~100% CPU on
+    # half-closed (CLOSE-WAIT) connections — which port probes, dropped SSE/MCP
+    # streams, and proxies all leave behind — pegging the event loop indefinitely.
+    # h11 handles the half-close correctly. Throughput is irrelevant for a local
+    # single-user tool; correctness isn't.
+    uvicorn.run("muse.main:app", host=s.host, port=s.port, log_level="warning", http="h11")
     return 0
 
 
