@@ -207,11 +207,34 @@ def create_app() -> FastAPI:
             fdmap = loop._selector.get_map() or {}  # type: ignore[attr-defined]
         except Exception:
             fdmap = {}
+        ready = list(getattr(loop, "_ready", []))
+        # The reprs of what's perpetually in the ready queue ARE the spin: a handle
+        # that reappears every sample is a callback re-scheduling itself.
+        ready_reprs: list[str] = []
+        for h in ready[:30]:
+            try:
+                cb = getattr(h, "_callback", None)
+                args = getattr(h, "_args", None)
+                detail = repr(cb)
+                if args:
+                    detail += " | " + " ".join(repr(a)[:80] for a in args)
+                ready_reprs.append(detail[:200])
+            except Exception:
+                ready_reprs.append(repr(h)[:200])
+        # Per-fd selector registration (a half-dead fd kept readable = an fd spin).
+        fds = []
+        for key in list(fdmap.values())[:30]:
+            try:
+                fds.append({"fd": key.fd, "events": key.events, "data": repr(key.data)[:120]})
+            except Exception:
+                pass
         return {
-            "ready": len(getattr(loop, "_ready", [])),
+            "ready": len(ready),
             "scheduled": len(getattr(loop, "_scheduled", [])),
             "selector_fds": len(fdmap),
             "tasks": len(asyncio.all_tasks()),
+            "ready_callbacks": ready_reprs,
+            "fds": fds,
         }
 
     @app.get("/api/version")
