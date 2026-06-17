@@ -233,7 +233,9 @@ class AlertsWatcher:
     async def _fire(self, cfg, rules, summary, kind: str, message: str, detail: str) -> None:
         delivered, deliver_detail = False, "notifications disabled"
         if cfg.enabled and cfg.topic.strip():
-            click = f"http://{_host()}/sessions/{summary.session_id}"
+            # base_url honors MUSE_PUBLIC_URL so a ntfy tap on a phone opens a
+            # reachable (e.g. tailscale) address, not 127.0.0.1.
+            click = f"{_base_url()}/sessions/{summary.session_id}"
             res = await asyncio.to_thread(
                 self.service.send_notification,
                 detail or message,
@@ -256,8 +258,7 @@ class AlertsWatcher:
         )
 
 
-def _host() -> str:
+def _base_url() -> str:
     from .config import get_settings
 
-    s = get_settings()
-    return f"{s.host}:{s.port}"
+    return get_settings().base_url

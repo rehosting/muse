@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import CommandPalette from "./components/CommandPalette";
 import LaunchModal from "./components/LaunchModal";
+import LoginGate from "./components/LoginGate";
 import ThemeToggle from "./components/ThemeToggle";
 
 export default function App() {
@@ -37,6 +38,9 @@ export default function App() {
         <NavLink to="/stats" className="nav-link">
           Stats
         </NavLink>
+        <NavLink to="/insights" className="nav-link">
+          Insights
+        </NavLink>
         <button
           className="nav-search"
           onClick={() => window.dispatchEvent(new Event("muse:search"))}
@@ -51,6 +55,7 @@ export default function App() {
       </main>
       <CommandPalette />
       <LaunchModal />
+      <LoginGate />
     </div>
   );
 }

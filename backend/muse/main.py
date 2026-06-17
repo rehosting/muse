@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db, lifecycle
+from .auth import AuthMiddleware
 from .config import get_settings
 from .alerts import AlertsWatcher
 from .autopilot.controller import AutopilotController
@@ -24,8 +25,10 @@ from .mcp import build_mcp, set_service
 from .board import BoardTicker
 from .routers import (
     ai,
+    auth,
     autopilot,
     board,
+    insights,
     interact,
     investigations,
     launch,
@@ -60,6 +63,11 @@ async def lifespan(app: FastAPI):
     app.state.autopilot = AutopilotController()
     # Parsed usage-limit resets anchor stats' 5h window (observed > estimated).
     app.state.autopilot.on_reset = app.state.service.usage_history.record_reset
+    # AI idle mode: the controller requests drafts and reads results through
+    # these callables (it never imports the service or touches the AI worker).
+    app.state.autopilot.enqueue_draft = app.state.service.enqueue_draft_reply
+    app.state.autopilot.get_ai_job = app.state.service.ai_jobs.get
+    app.state.autopilot.ai_cost_today = app.state.service.ai_jobs.cost_today
     app.state.autopilot.start()
     app.state.alerts = AlertsWatcher(app.state.service)
     app.state.alerts.start()
@@ -100,6 +108,15 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="muse", version="0.1.0", lifespan=lifespan)
 
+    # Token auth for non-loopback clients (no-op when no token is configured).
+    # PURE ASGI — never replace with BaseHTTPMiddleware/@app.middleware("http"):
+    # those buffer streaming responses and break SSE + the MCP sub-app.
+    # Added BEFORE CORSMiddleware so CORS wraps it (preflights never 401).
+    app.add_middleware(
+        AuthMiddleware,
+        token_provider=settings.resolve_auth_token,
+        allow_loopback=settings.auth_allow_loopback,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -116,7 +133,9 @@ def create_app() -> FastAPI:
     app.include_router(launch.router)
     app.include_router(ai.router)
     app.include_router(board.router)
+    app.include_router(insights.router)
     app.include_router(interact.router)
+    app.include_router(auth.router)
 
     # MCP server (Streamable HTTP) on the same process → tool calls share state
     # with the web UI. The sub-app serves at /mcp/; redirect the canonical bare
@@ -170,8 +189,22 @@ def create_app() -> FastAPI:
 
         @app.get("/{full_path:path}")
         def spa(full_path: str):
-            index = _FRONTEND_DIST / "index.html"
-            return FileResponse(index)
+            # Serve real files that exist at the dist root (manifest, icons,
+            # favicon, robots) before falling back to the SPA shell.
+            if full_path:
+                candidate = (_FRONTEND_DIST / full_path).resolve()
+                if (
+                    _FRONTEND_DIST.resolve() in candidate.parents
+                    and candidate.is_file()
+                ):
+                    return FileResponse(candidate)
+            # index.html is never cached: a rebuild changes the hashed asset
+            # names it references, and we ship no service worker — a stale shell
+            # would point at deleted bundles.
+            return FileResponse(
+                _FRONTEND_DIST / "index.html",
+                headers={"Cache-Control": "no-cache"},
+            )
 
     return app
 

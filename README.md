@@ -105,17 +105,52 @@ Tests / lint:
   than using inotify, which is robust against the inotify-watch exhaustion common
   on machines actively running Claude Code.
 - `MUSE_RUNNING_THRESHOLD_SECONDS` — how recent an mtime counts as "running" (30).
+- `MUSE_AI_MODEL` / `MUSE_AI_TIMEOUT_SECONDS` — the headless `claude -p` model
+  (default `sonnet`) and per-job timeout used by Ask muse, summaries, digests,
+  draft-reply, diagnose, and triage.
+- `MUSE_AI_AUTO_DIGEST` — opt in (`1`) to auto-generate the daily journal digest
+  and the Monday weekly retro.
+- `MUSE_AI_DAILY_BUDGET_USD` — cap on AI spend from autopilot's `ai` idle mode
+  (default `2.0`; `0` disables that mode — human-initiated AI still works).
+- `MUSE_AUTH_TOKEN` / `MUSE_AUTH_ALLOW_LOOPBACK` / `MUSE_PUBLIC_URL` — see below.
 
-## Future: job queue + tmux injection
+## Remote access (tailscale / LAN)
 
-The backend is a long-running service by design so a job/worker layer can slot
-in without restructuring (see `backend/muse/jobs/__init__.py`):
+muse is local-first: bound to `127.0.0.1` with no auth, nothing changes. To reach
+it from your phone over tailscale, bind publicly and set a token:
 
-- `services/events.py` (the pub/sub broker) already streams events to clients;
-  a worker will publish job lifecycle events onto a `job:{id}` topic and reuse
-  the existing SSE machinery.
-- `services/session_service.py` is the only seam routers touch; job methods land
-  there, keeping routers thin.
-- `main.py`'s lifespan owns long-lived state, so a background worker task and a
-  `tmux_adapter` (libtmux `send-keys` into a Claude Code pane) start/stop with
-  the broker and tailer registry.
+```bash
+MUSE_HOST=0.0.0.0 \
+MUSE_PUBLIC_URL=http://<your-tailnet-host>:8848 \
+MUSE_AUTH_TOKEN=$(openssl rand -base64 24) \
+muse restart
+# (omit MUSE_AUTH_TOKEN and muse generates ~/.muse/auth_token on first non-loopback bind)
+```
+
+- `/api/*` and `/mcp` now require the token (Bearer header or the cookie set by
+  the in-app login prompt); the SPA shell stays public. **Loopback always
+  bypasses** so your local UI, scripts, and local Claude Code MCP keep working
+  untouched — set `MUSE_AUTH_ALLOW_LOOPBACK=0` to require the token even locally.
+- `MUSE_PUBLIC_URL` makes ntfy notification taps and MCP-cited links open the
+  reachable address instead of `127.0.0.1`.
+- Remote Claude Code MCP: `claude mcp add --transport http muse <url>/mcp/ --header "Authorization: Bearer <token>"`.
+- Within a tailnet the http cookie is fine; if you expose muse beyond it, front
+  it with TLS (the cookie auto-upgrades to `Secure` over https).
+- Installs as a PWA (Add to Home Screen); the board, session list, journal, ask,
+  and a conversation-only viewer are phone-sized.
+
+## AI layer
+
+muse calls Claude itself via the headless `claude -p` CLI (your Max-plan auth;
+no API key), one job at a time on a background worker:
+
+- **Ask muse** — a question across your whole history, answered with deep links
+  into the cited sessions.
+- **Mission control** (the board) — AI-drafted replies you edit and send,
+  stuck-session diagnosis, and one-pass triage of everything needing attention.
+- **Autopilot `ai` mode** — drafts and (re-checking idleness + a daily budget)
+  types the next reply into a live tmux pane; never answers permission prompts.
+- **Digests / retros / summaries** — journal and investigation entries.
+
+`services/session_service.py` is the only seam routers touch; the worker and the
+tmux transport start/stop with the app lifespan in `main.py`.
