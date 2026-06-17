@@ -22,6 +22,15 @@ from .store import AutopilotStore
 TICK_SECONDS = 5
 INJECT_STATUSES = {"idle"}  # only when a turn finished and it's awaiting the user
 
+
+def _dt_or_none(value) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
 # Phrases Claude Code shows when a usage/rate limit is hit.
 _RATE_LIMIT_RE = re.compile(
     r"(usage limit|rate limit|out of credits|5-hour limit|weekly limit|limit reached|"
@@ -40,6 +49,14 @@ class AutopilotController:
         # Optional observer for parsed usage-limit reset times (wired to the
         # usage-history store in main.py so stats can anchor the 5h window).
         self.on_reset = None
+        # AI idle-mode callables (wired in main.py to the SessionService — same
+        # pattern as on_reset, avoiding an import cycle):
+        #   enqueue_draft(sid) -> AIJob | None
+        #   get_ai_job(job_id) -> AIJob | None
+        #   ai_cost_today() -> float
+        self.enqueue_draft = None
+        self.get_ai_job = None
+        self.ai_cost_today = None
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -171,6 +188,14 @@ class AutopilotController:
             ls = live.get(sid)
             if ls is None or not ls.pane_id:
                 continue
+            # AI idle-mode Phase B runs BEFORE the one-send-per-turn gate: the
+            # pending draft was requested against the CURRENT turn, which that
+            # gate would now block.
+            if cfg.idle_mode == "ai":
+                job_id, req_upd = self.store.get_ai_pending(sid)
+                if job_id:
+                    self._ai_phase_b(sid, cfg, ls, job_id, req_upd, now)
+                    continue
             if cfg.sent_count >= cfg.max_sends:
                 continue
             if ls.status not in INJECT_STATUSES or ls.waiting_for:
@@ -210,6 +235,13 @@ class AutopilotController:
                 continue
 
             # Otherwise the normal "keep going" action.
+            if cfg.idle_mode == "ai":
+                # Phase A: all the gates above passed exactly as they would for
+                # a message-mode send — request a draft instead of sending.
+                # (Phase B, _ai_phase_b below, sends it on a later tick after
+                # re-checking everything fresh.)
+                self._ai_phase_a(sid, ls)
+                continue
             if cfg.idle_mode == "suggestion":
                 ok, err = tmux.accept_suggestion(ls.pane_id)
                 detail = f"{ls.pane_id} ← (accepted Claude's suggestion)"
@@ -223,6 +255,80 @@ class AutopilotController:
                 self.store.log(sid, "injected", detail)
             else:
                 self.store.log(sid, "error", err)
+
+    # --- AI idle mode (two-phase) ---------------------------------------------
+    # Phase A requests a draft at exactly the point message-mode would inject
+    # (so every existing gate — enabled/idle/no-waiting_for/max_sends/interval/
+    # backoff/one-send-per-turn — has already passed). Phase B, on a later tick,
+    # re-checks the world before typing anything into the pane. The controller
+    # stays the ONLY autopilot tmux-write site; the AI worker never touches tmux.
+
+    _AI_DRAFT_MAX_AGE = timedelta(minutes=10)
+
+    def _ai_budget_left(self) -> bool:
+        budget = get_settings().ai_daily_budget_usd
+        if budget <= 0:
+            return False  # ≤0 disables ai mode entirely
+        if self.ai_cost_today is None:
+            return False
+        try:
+            return self.ai_cost_today() < budget
+        except Exception:
+            return False
+
+    def _ai_phase_a(self, sid: str, ls) -> None:
+        if self.enqueue_draft is None:
+            return
+        if not self._ai_budget_left():
+            self.store.log(sid, "ai_discarded", "daily AI budget exhausted (or ai disabled)")
+            return
+        try:
+            job = self.enqueue_draft(sid)
+        except Exception as e:
+            self.store.log(sid, "error", f"draft enqueue failed: {e}")
+            return
+        if job is None:
+            return
+        self.store.set_ai_pending(sid, job.id, ls.updated_at)
+        self.store.log(sid, "ai_requested", f"draft job {job.id}")
+
+    def _ai_phase_b(self, sid: str, cfg: AutopilotConfig, ls, job_id: str,
+                    requested_updated_at, now) -> None:
+        job = self.get_ai_job(job_id) if self.get_ai_job else None
+
+        def discard(reason: str) -> None:
+            self.store.set_ai_pending(sid, None, None)
+            self.store.log(sid, "ai_discarded", f"{job_id}: {reason}")
+
+        if job is None:
+            return discard("job vanished")
+        if job.status in ("error", "cancelled"):
+            return discard(f"job {job.status}: {str(job.error or '')[:80]}")
+        if job.status in ("queued", "running"):
+            created = _dt_or_none(job.created_at)
+            if created and (now - created) > self._AI_DRAFT_MAX_AGE:
+                return discard("draft took >10 min — stale")
+            return  # still cooking; check again next tick
+        # status == done — re-check EVERYTHING fresh before typing.
+        draft = (job.result or {}).get("draft", "")
+        if not draft.strip():
+            return discard("empty draft")
+        if ls.status not in INJECT_STATUSES or ls.waiting_for:
+            return discard(f"session no longer idle ({ls.status}/{ls.waiting_for})")
+        if requested_updated_at and ls.updated_at and ls.updated_at != requested_updated_at:
+            return discard("session moved on since the draft was requested")
+        if cfg.sent_count >= cfg.max_sends:
+            return discard("max_sends reached")
+        pane = tmux.capture_pane(ls.pane_id, 40)
+        if _RATE_LIMIT_RE.search(pane):
+            return discard("rate-limit banner on pane")
+        ok, err = tmux.send_text(ls.pane_id, draft)
+        self.store.set_ai_pending(sid, None, None)
+        if ok:
+            self.store.record_send(sid, ls.updated_at)
+            self.store.log(sid, "ai_injected", f"{ls.pane_id} ← {draft[:80]}")
+        else:
+            self.store.log(sid, "error", f"ai send failed: {err}")
 
     def _do_context_action(self, sid: str, cfg: AutopilotConfig, ls, pct: float) -> bool:
         act = cfg.context_action

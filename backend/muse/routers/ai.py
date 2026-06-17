@@ -82,6 +82,35 @@ def summarize_session(session_id: str, request: Request) -> AIJob:
     return job
 
 
+@router.post("/sessions/{session_id}/draft-reply", response_model=AIJob)
+def draft_reply(session_id: str, request: Request) -> AIJob:
+    """Draft the user's next reply to this session (result is a prefill — the
+    human always edits and sends; muse never auto-sends from this endpoint)."""
+    job = _service(request).enqueue_draft_reply(session_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return job
+
+
+@router.post("/sessions/{session_id}/diagnose", response_model=AIJob)
+def diagnose(session_id: str, request: Request) -> AIJob:
+    job = _service(request).enqueue_diagnose(session_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return job
+
+
+class TriageRequest(BaseModel):
+    session_ids: list[str]
+
+
+@router.post("/board/triage", response_model=AIJob)
+def triage(body: TriageRequest, request: Request) -> AIJob:
+    if not body.session_ids:
+        raise HTTPException(status_code=400, detail="no sessions to triage")
+    return _service(request).enqueue_triage(body.session_ids)
+
+
 @router.get("/ai/status", response_model=AIStatus)
 def status(request: Request) -> AIStatus:
     return _service(request).ai_status()

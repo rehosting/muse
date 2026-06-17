@@ -1,8 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { api } from "../api/client";
 import type { BoardCard } from "../api/types";
+import AiActionButton from "../components/AiActionButton";
 import SessionCard from "../components/board/SessionCard";
 import { useBoardStream } from "../hooks/useBoardStream";
+
+const TRIAGE_FRESH_MS = 30 * 60 * 1000;
 
 /** Mission control: every recent session as a live card, triaged into
  * Needs attention → Working → Stopped. One SSE connection feeds all cards
@@ -29,7 +33,26 @@ export function groupOf(c: BoardCard): Group {
 export default function BoardPage() {
   const { cards, live } = useBoardStream();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Triage lines come from the latest batched AI job (client-side merge only —
+  // the ticker's diffed cards stay AI-free). Shown while reasonably fresh.
+  const [triage, setTriage] = useState<Record<string, string>>({});
   const navigate = useNavigate();
+
+  useEffect(() => {
+    api
+      .listAiJobs(1, "triage")
+      .then((jobs) => {
+        const j = jobs[0];
+        if (
+          j?.status === "done" &&
+          j.finished_at &&
+          Date.now() - new Date(j.finished_at).getTime() < TRIAGE_FRESH_MS
+        ) {
+          setTriage((j.result as { lines?: Record<string, string> })?.lines ?? {});
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   const groups = useMemo(() => {
     const g: Record<Group, BoardCard[]> = { attention: [], working: [], stopped: [] };
@@ -68,6 +91,16 @@ export default function BoardPage() {
           </span>
         </h2>
         <div className="board-actions">
+          <AiActionButton
+            label="✦ triage"
+            title="One AI pass over every needs-attention session: what does each need from you?"
+            enqueue={() =>
+              api.triageBoard(groups.attention.map((c) => c.session_id))
+            }
+            onDone={(job) =>
+              setTriage((job.result as { lines?: Record<string, string> })?.lines ?? {})
+            }
+          />
           <button
             className="action-btn follow-live-btn"
             disabled={!liveIds.length}
@@ -92,7 +125,7 @@ export default function BoardPage() {
             ✋ Needs attention ({groups.attention.length})
           </h3>
           {groups.attention.map((c) => (
-            <SessionCard key={c.session_id} card={c}
+            <SessionCard key={c.session_id} card={c} triageLine={triage[c.session_id]}
               selected={selected.has(c.session_id)} onToggle={toggle} />
           ))}
         </section>
@@ -104,7 +137,7 @@ export default function BoardPage() {
             ● Working ({groups.working.length})
           </h3>
           {groups.working.map((c) => (
-            <SessionCard key={c.session_id} card={c}
+            <SessionCard key={c.session_id} card={c} triageLine={triage[c.session_id]}
               selected={selected.has(c.session_id)} onToggle={toggle} />
           ))}
         </section>

@@ -29,6 +29,10 @@ from ..models import (
     InvestigationRef,
     InvestigationSummary,
     Note,
+    OutcomesResponse,
+    TimelineCommit,
+    TimelineResponse,
+    TimelineSession,
     NotifyConfig,
     NotifyResult,
     SearchHit,
@@ -91,6 +95,44 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
 
 
+def sanitize_draft(text: str) -> str:
+    """Make an AI-drafted reply safe to type into a live Claude Code prompt.
+    Strips markdown fences, refuses slash/bash-mode leaders (injection via the
+    transcript could otherwise smuggle a /command or !shell), caps length.
+    Raises RunnerError when nothing safe remains."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        lines = t.split("\n")
+        lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        t = "\n".join(lines).strip()
+    t = t.strip("`").strip()
+    while t[:1] in ("/", "!"):
+        t = t[1:].lstrip()
+    t = t[:1500].strip()
+    if not t:
+        raise RunnerError("draft sanitized to nothing")
+    return t
+
+
+def _split_triage_block(text: str) -> dict[str, str]:
+    """Parse the ```triage fenced JSON object; lenient — {} on any failure."""
+    marker = "```triage"
+    idx = text.rfind(marker)
+    block = text[idx + len(marker):] if idx >= 0 else text
+    end = block.find("```")
+    if end >= 0:
+        block = block[:end]
+    try:
+        data = json.loads(block.strip())
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v)[:200] for k, v in data.items() if isinstance(v, str)}
+
+
 def _split_refs_block(text: str) -> tuple[str, list[dict]]:
     """Split a weekly-retro answer into (body_md, refs). The prompt asks for a
     trailing ```refs fenced JSON array; parse it leniently and drop it from the
@@ -143,6 +185,7 @@ class SessionService:
         self._sessions_lock = threading.Lock()
         self._sessions_refreshing = False
         self._stats_caches: dict[int, tuple[float, StatsResponse]] = {}
+        self._insights_caches: dict[int, tuple[float, "OutcomesResponse"]] = {}
         self._search_refresh_ts = 0.0
         self._brief_cache: dict[str, tuple[float, dict]] = {}
         # Parse caches: the viewer page bursts 6–8 requests that all need the
@@ -219,6 +262,94 @@ class SessionService:
         result = stats.compute_stats(days, self.usage_history)
         self._stats_caches[days] = (time.monotonic(), result)
         return result
+
+    def get_insights(self, days: int = 30) -> "OutcomesResponse":
+        cached = self._insights_caches.get(days)
+        if cached is not None and (time.monotonic() - cached[0]) < _STATS_TTL:
+            return cached[1]
+        result = self._compute_insights(days)
+        self._insights_caches[days] = (time.monotonic(), result)
+        return result
+
+    def _compute_insights(self, days: int) -> "OutcomesResponse":
+        from datetime import timedelta, timezone
+
+        from .. import insights_outcomes as io
+
+        now = datetime.now(timezone.utc)
+        summaries = self.list_sessions()
+        if days > 0:
+            cutoff = now.timestamp() - days * 86400
+            summaries = [s for s in summaries if s.mtime.timestamp() >= cutoff]
+        since_iso = (
+            (now - timedelta(days=days)).isoformat() if days > 0 else None
+        )
+        scan = usage_cache.scan_all()  # for the matrix activity layer
+        # board_rollup reuses the same per-file mtime cache, so this is cheap
+        # right after scan_all; we only need its (tokens, cost) per session.
+        rollup, _pcts = usage_cache.board_rollup()
+        # Calendar wants a long durable window regardless of the selected range.
+        cal_start = (now - timedelta(days=max(days, 180))).strftime("%Y-%m-%d")
+        return io.compute_outcomes(
+            days=days,
+            now=now,
+            summaries=summaries,
+            rollup=rollup,
+            windows=self.file_index.session_windows(),
+            health_rows=self.health.snapshot_rows(),
+            commits_by_sid=self.git_index.commits_by_session(since_iso),
+            history_rows=self.usage_history.rows(cal_start, now.strftime("%Y-%m-%d")),
+            error_times=self.file_index.error_times(since_iso),
+            commit_times=self.git_index.commit_times(since_iso),
+            scan=scan,
+        )
+
+    def get_insights_timeline(self, project_cwd: str, days: int = 30) -> "TimelineResponse":
+        from datetime import timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=days)
+        since_iso = start.isoformat()
+        insights = self.get_insights(days)
+        sessions = [
+            TimelineSession(
+                session_id=o.session_id, title=o.title, started=o.started,
+                ended=o.ended, cost_usd=o.cost_usd, health=o.health,
+            )
+            for o in insights.outcomes
+            if o.project_cwd == project_cwd
+        ]
+        # Attach commits to their best-confidence session; the rest are unmatched.
+        toplevel = self.git_index.toplevel_for(project_cwd)
+        repo_commits = (
+            self.git_index.commits_for_repo(toplevel, since_iso) if toplevel else []
+        )
+        commits_by_sid = self.git_index.commits_by_session(since_iso)
+        owner: dict[str, tuple[str, str]] = {}  # hash -> (sid, confidence)
+        rank = {"high": 0, "medium": 1, "low": 2}
+        for sid, rows in commits_by_sid.items():
+            for c in rows:
+                h = c["commit_hash"]
+                prev = owner.get(h)
+                if prev is None or rank.get(c["confidence"], 3) < rank.get(prev[1], 3):
+                    owner[h] = (sid, c["confidence"])
+        sess_by_id = {s.session_id: s for s in sessions}
+        unmatched: list[TimelineCommit] = []
+        for c in repo_commits:
+            tc = TimelineCommit(
+                commit_hash=c["commit_hash"], subject=c["subject"] or "",
+                ts=_parse_iso(c["committer_date"]),
+            )
+            own = owner.get(c["commit_hash"])
+            if own and own[0] in sess_by_id:
+                tc.confidence = own[1]
+                sess_by_id[own[0]].commits.append(tc)
+            else:
+                unmatched.append(tc)
+        return TimelineResponse(
+            project=project_cwd, start=start, end=now,
+            sessions=sessions, unmatched_commits=unmatched,
+        )
 
     def roll_usage_history(self) -> int:
         """Warm the usage cache AND persist per-day rollups (called by the
@@ -1415,6 +1546,19 @@ class SessionService:
     def enqueue_weekly_retro(self, week_start: str) -> "AIJob":
         return self._enqueue_ai("weekly_retro", {"week_start": week_start})
 
+    def enqueue_draft_reply(self, session_id: str) -> Optional["AIJob"]:
+        if not any(s.session_id == session_id for s in self.list_sessions()):
+            return None
+        return self._enqueue_ai("draft_reply", {"session_id": session_id})
+
+    def enqueue_diagnose(self, session_id: str) -> Optional["AIJob"]:
+        if not any(s.session_id == session_id for s in self.list_sessions()):
+            return None
+        return self._enqueue_ai("diagnose", {"session_id": session_id})
+
+    def enqueue_triage(self, session_ids: list[str]) -> "AIJob":
+        return self._enqueue_ai("triage", {"session_ids": session_ids[:8]})
+
     def _enqueue_ai(self, kind: str, params: dict) -> "AIJob":
         job = self.ai_jobs.enqueue(kind, params, model=get_settings().ai_model)
         self.ai_worker.kick()
@@ -1446,6 +1590,15 @@ class SessionService:
             prompt = ai_context.pack_for_day(self, params.get("day", ""))
         elif kind == "weekly_retro":
             prompt = ai_context.pack_for_week(self, params.get("week_start", ""))
+        elif kind == "draft_reply":
+            prompt = ai_context.pack_for_reply(
+                self, params.get("session_id", ""),
+                pane_text=self._pane_text(params.get("session_id", "")),
+            )
+        elif kind == "diagnose":
+            prompt = ai_context.pack_for_diagnose(self, params.get("session_id", ""))
+        elif kind == "triage":
+            prompt = ai_context.pack_for_triage(self, params.get("session_ids") or [])
         else:  # pragma: no cover - enqueue() validates kinds
             raise RunnerError(f"unknown job kind {kind!r}")
         if prompt is None:
@@ -1467,8 +1620,32 @@ class SessionService:
         result.update(self._route_ai_output(kind, params, run.text))
         return result
 
+    def _pane_text(self, session_id: str) -> str:
+        """Best-effort capture of the session's live tmux pane (worker thread)."""
+        try:
+            from ..autopilot import sessions as live_discovery
+
+            ls = next(
+                (s for s in live_discovery.discover() if s.session_id == session_id),
+                None,
+            )
+            if ls and ls.pane_id:
+                return tmux.capture_pane(ls.pane_id, 30)
+        except Exception:
+            pass
+        return ""
+
     def _route_ai_output(self, kind: str, params: dict, text: str) -> dict:
         """Persist non-ask outputs into the existing stores (notes/retros)."""
+        if kind == "draft_reply":
+            return {"draft": sanitize_draft(text)}  # ephemeral: job result only
+        if kind == "triage":
+            return {"lines": _split_triage_block(text)}
+        if kind == "diagnose":
+            note = self.worklog.create_note(
+                text, session_id=params.get("session_id"), kind="brief", author="ai"
+            )
+            return {"output_ref": {"type": "note", "id": note.id}}
         if kind == "session_summary":
             note = self.worklog.create_note(
                 text, session_id=params.get("session_id"), kind="brief", author="ai"

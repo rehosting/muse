@@ -22,7 +22,15 @@ from typing import Callable, Optional
 from .. import db
 from ..models import AIJob
 
-KINDS = ("ask", "session_summary", "daily_digest", "weekly_retro")
+KINDS = (
+    "ask",
+    "session_summary",
+    "daily_digest",
+    "weekly_retro",
+    "draft_reply",
+    "diagnose",
+    "triage",
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ai_job (
@@ -227,6 +235,21 @@ class AIJobStore:
                 "SELECT status, COUNT(*) AS n FROM ai_job GROUP BY status"
             ).fetchall()
         return {r["status"]: r["n"] for r in rows}
+
+    def cost_today(self) -> float:
+        """AI spend since local midnight — the autopilot ai-mode budget gate."""
+        midnight = (
+            datetime.now()
+            .replace(hour=0, minute=0, second=0, microsecond=0)
+            .astimezone(timezone.utc)
+            .isoformat()
+        )
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(SUM(cost_usd), 0) AS c FROM ai_job WHERE finished_at >= ?",
+                (midnight,),
+            ).fetchone()
+        return float(row["c"] or 0.0)
 
     def total_cost(self) -> float:
         with self._lock:

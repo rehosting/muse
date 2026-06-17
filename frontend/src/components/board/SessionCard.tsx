@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { api } from "../../api/client";
 import type { BoardCard } from "../../api/types";
 import { formatTokens, relativeTime, shortModel } from "../../util/format";
+import AiActionButton from "../AiActionButton";
+import InvestigationBody from "../InvestigationBody";
 import HealthBadges from "./HealthBadges";
 import ReplyBox from "./ReplyBox";
 import TerminalPeek from "./TerminalPeek";
@@ -35,12 +38,15 @@ export default function SessionCard({
   card,
   selected,
   onToggle,
+  triageLine,
 }: {
   card: BoardCard;
   selected: boolean;
   onToggle: (id: string) => void;
+  triageLine?: string;
 }) {
   const [peek, setPeek] = useState(false);
+  const [diagnosis, setDiagnosis] = useState<string | null>(null);
   const dot = statusDot(card);
   const act = card.last_activity;
   const interactive = card.provider === "claude" && card.state !== "stopped";
@@ -89,6 +95,8 @@ export default function SessionCard({
         <HealthBadges health={card.health} flags={card.health_flags} />
       </div>
 
+      {triageLine && <div className="scard-triage">✦ {triageLine}</div>}
+
       {act && act.text && (
         <div className={`scard-activity${act.kind === "error" ? " scard-act-err" : ""}`}>
           <span className="scard-act-icon">{ACTIVITY_ICON[act.kind] ?? "·"}</span>
@@ -122,7 +130,24 @@ export default function SessionCard({
             >
               ⊕ follow
             </Link>
+            {card.health === "bad" && (
+              <AiActionButton
+                label="✦ diagnose"
+                title="AI diagnosis of why this session is stuck (also saved as a note)"
+                enqueue={() => api.diagnoseSession(card.session_id)}
+                onDone={(job) =>
+                  setDiagnosis(
+                    (job.result as { answer_md?: string } | null)?.answer_md ?? null,
+                  )
+                }
+              />
+            )}
           </div>
+          {diagnosis && (
+            <div className="scard-diagnosis">
+              <InvestigationBody body={diagnosis} refs={[]} />
+            </div>
+          )}
           {peek && card.has_pane && <TerminalPeek sessionId={card.session_id} />}
         </>
       )}

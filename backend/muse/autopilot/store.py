@@ -45,6 +45,10 @@ _MIGRATIONS = [
     "ALTER TABLE autopilot_config ADD COLUMN backoff_seconds INTEGER NOT NULL DEFAULT 900",
     "ALTER TABLE autopilot_config ADD COLUMN backoff_until TEXT",
     "ALTER TABLE autopilot_config ADD COLUMN idle_mode TEXT NOT NULL DEFAULT 'message'",
+    # AI idle mode: the in-flight draft job + the updated_at snapshot it was
+    # requested against (Phase B discards the draft if the session moved on).
+    "ALTER TABLE autopilot_config ADD COLUMN ai_pending_job_id TEXT",
+    "ALTER TABLE autopilot_config ADD COLUMN ai_requested_updated_at TEXT",
 ]
 
 
@@ -204,6 +208,40 @@ class AutopilotStore:
                 "SELECT last_seen_updated_at FROM autopilot_config WHERE session_id=?", (sid,)
             ).fetchone()
         return _dt(row["last_seen_updated_at"]) if row else None
+
+    # --- ai idle-mode pending draft ------------------------------------------
+    def set_ai_pending(self, sid: str, job_id: Optional[str],
+                       requested_updated_at: Optional[datetime]) -> None:
+        def _do() -> None:
+            with self._lock:
+                # The config row may not exist yet (Phase A can fire before the
+                # user ever saved settings for this session).
+                self._conn.execute(
+                    "INSERT INTO autopilot_config(session_id) VALUES(?) "
+                    "ON CONFLICT(session_id) DO NOTHING",
+                    (sid,),
+                )
+                self._conn.execute(
+                    "UPDATE autopilot_config SET ai_pending_job_id=?, "
+                    "ai_requested_updated_at=? WHERE session_id=?",
+                    (job_id,
+                     requested_updated_at.isoformat() if requested_updated_at else None,
+                     sid),
+                )
+                self._conn.commit()
+
+        db.retry_locked(_do)
+
+    def get_ai_pending(self, sid: str) -> tuple[Optional[str], Optional[datetime]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT ai_pending_job_id, ai_requested_updated_at "
+                "FROM autopilot_config WHERE session_id=?",
+                (sid,),
+            ).fetchone()
+        if row is None:
+            return None, None
+        return row["ai_pending_job_id"], _dt(row["ai_requested_updated_at"])
 
     # --- log ----------------------------------------------------------------
     def log(self, sid: str, action: str, detail: str = "") -> None:
