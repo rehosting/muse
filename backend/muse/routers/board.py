@@ -10,20 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import time
 
 from fastapi import APIRouter, Request
 
 from ..models import BoardSnapshot
-from ..sse import SafeEventSourceResponse
+from ..sse import RawSSE
 
 router = APIRouter(prefix="/api", tags=["board"])
 
 HEARTBEAT_SECONDS = 15
-# See stream.py: bound the stream's life so a proxy-half-closed connection can't
-# linger (and spin the event loop) for hours. EventSource reconnects silently.
-SSE_MAX_SECONDS = int(os.environ.get("MUSE_SSE_MAX_SECONDS", "300"))
 
 
 @router.get("/board", response_model=BoardSnapshot)
@@ -40,16 +35,12 @@ async def stream_board(request: Request):
     queue = await broker.subscribe("board")
 
     async def event_generator():
-        # See stream.py: polling request.is_disconnected() here steals the ASGI
-        # receive channel from sse_starlette's disconnect listener, so the stream
-        # is never cancelled on disconnect and `finally` never releases the board
-        # ticker / subscription — a leak that pegs the event loop over time.
-        deadline = time.monotonic() + SSE_MAX_SECONDS if SSE_MAX_SECONDS else None
+        # RawSSE streams with plain ASGI sends (no anyio task group / receive loop),
+        # so a gone client lingers idle until the bounded lifetime ends and can't
+        # spin the event loop (see ..sse for the full root-cause writeup).
         try:
             yield {"event": "snapshot", "data": snapshot.model_dump_json()}
             while True:
-                if deadline and time.monotonic() > deadline:
-                    break  # bounded lifetime — client reconnects, half-open conns get reaped
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)
                 except asyncio.TimeoutError:
@@ -60,4 +51,4 @@ async def stream_board(request: Request):
             await broker.unsubscribe("board", queue)
             await board.release()
 
-    return SafeEventSourceResponse(event_generator(), ping=HEARTBEAT_SECONDS)
+    return RawSSE(event_generator())
