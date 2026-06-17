@@ -7,7 +7,8 @@ import os
 import time
 
 from fastapi import APIRouter, HTTPException, Request
-from sse_starlette.sse import EventSourceResponse
+
+from ..sse import SafeEventSourceResponse
 
 router = APIRouter(prefix="/api", tags=["stream"])
 
@@ -52,4 +53,4 @@ async def stream_session(session_id: str, request: Request):
         finally:
             await service.unsubscribe(session_id, queue)
 
-    return EventSourceResponse(event_generator(), ping=HEARTBEAT_SECONDS)
+    return SafeEventSourceResponse(event_generator(), ping=HEARTBEAT_SECONDS)
