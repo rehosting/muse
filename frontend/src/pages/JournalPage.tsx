@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Journal, Note } from "../api/types";
 import { relativeTime } from "../util/format";
@@ -26,7 +26,9 @@ function shiftDay(day: string, delta: number): string {
  * sessions they belong to (sessions active that day are listed even when
  * note-less, so the journal doubles as a daily activity log). */
 export default function JournalPage() {
-  const [day, setDay] = useState(todayStr());
+  // ?day= deep-links here (e.g. the Insights calendar heatmap).
+  const [searchParams] = useSearchParams();
+  const [day, setDay] = useState(searchParams.get("day") || todayStr());
   const [journal, setJournal] = useState<Journal | null>(null);
   const [draft, setDraft] = useState("");
 

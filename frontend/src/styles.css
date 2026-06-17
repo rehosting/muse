@@ -4870,3 +4870,178 @@ body.resizing {
 .commit-hits {
   margin-bottom: 14px;
 }
+
+/* --- AI copilot on the board ------------------------------------------------ */
+.scard-triage {
+  margin: 5px 0 0 17px;
+  font-size: 12px;
+  color: var(--accent);
+}
+.scard-diagnosis {
+  margin: 8px 0 0 17px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--err);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* --- Login gate (remote access) ----------------------------------------------- */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.login-card {
+  width: min(360px, 90vw);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-pop);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.login-input {
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  padding: 8px 10px;
+}
+.login-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.login-error {
+  color: var(--err);
+  font-size: 12px;
+}
+
+/* ============================================================================
+   Mobile / touch (single appended block — never edit desktop rules in place).
+   Phones get layout-1 viewer by default (SessionViewPage), so the multi-pane
+   tool log isn't a concern here; we fix the navbar, grids, and fixed widths.
+   ============================================================================ */
+@media (max-width: 700px) {
+  .navbar {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    padding: 5px 10px;
+    padding-left: max(10px, env(safe-area-inset-left));
+    padding-right: max(10px, env(safe-area-inset-right));
+    gap: 10px;
+  }
+  .navbar::-webkit-scrollbar { display: none; }
+  .nav-link { white-space: nowrap; padding: 8px 6px; }
+  .nav-search { white-space: nowrap; }
+  .nav-search kbd { display: none; }
+
+  .content { padding-bottom: env(safe-area-inset-bottom); }
+
+  /* Stats tiles / any 4- or 2-up grid collapses to one column. */
+  .stats-tiles,
+  .cost-grid,
+  [class*="grid-4"] { grid-template-columns: 1fr !important; }
+
+  /* Fixed-width popovers/inputs must fit the viewport. */
+  .help-card,
+  .cmdk-panel,
+  .rename-input,
+  .export-pop,
+  .subagent-pop { min-width: 0 !important; max-width: 94vw !important; }
+
+  /* Board: full-width cards, wrapped meta. */
+  .scard-meta { gap: 6px; }
+  .scard-right { flex-wrap: wrap; gap: 6px; }
+  .board-head { flex-wrap: wrap; gap: 8px; }
+
+  /* Session list: drop the lowest-value columns. */
+  .session-card .project-cwd,
+  .session-card .tok-chip { display: none; }
+
+  /* Viewer header actions wrap instead of overflowing. */
+  .viewer-actions { flex-wrap: wrap; }
+  .layout-switch { display: none; } /* layout is forced to 1 on phones */
+
+  /* Ask / Journal prose panels go full width. */
+  .ask-wrap, .journal-wrap, .list-wrap { max-width: 100%; }
+}
+
+/* Touch devices: bigger tap targets, and reveal hover-only affordances. */
+@media (pointer: coarse) {
+  .nav-link,
+  .action-btn,
+  .theme-toggle,
+  .layout-btn { min-height: 40px; }
+  .scard-actions .action-btn { min-height: 36px; }
+  /* Anything normally shown only on :hover stays visible when there's no hover. */
+  .session-card .row-actions,
+  .note-delete,
+  .backlink-ref { opacity: 1 !important; }
+}
+
+/* --- Insights page ---------------------------------------------------------- */
+.insights-wrap { max-width: 1000px; }
+.ins-section { margin: 18px 0 24px; }
+.ins-h { font-size: 13px; margin: 0 0 8px; color: var(--text); }
+.ins-h-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+.ins-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.ins-sess { color: var(--text); text-decoration: none; }
+.ins-sess:hover { color: var(--accent); }
+.ins-subj { font-size: 11px; margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ins-ship { color: var(--running); font-weight: 600; }
+.ins-key { font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; max-width: 220px; white-space: nowrap; }
+.model-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ratio-bar-wrap { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.ratio-bar { display: inline-block; height: 7px; background: var(--accent); border-radius: 3px; min-width: 2px; }
+
+/* Calendar heatmap */
+.cal-heatmap { max-width: 760px; }
+.cal-month, .cal-dow { fill: var(--text-dim); font-size: 9px; }
+.cal-cell { fill: var(--bg-elev2); cursor: pointer; }
+.cal-cell:hover { stroke: var(--accent); stroke-width: 1.5; }
+.cal-l0 { fill: var(--bg-elev2); }
+.cal-l1 { fill: #1d3a5f; }
+.cal-l2 { fill: #2a5a9c; }
+.cal-l3 { fill: #4a86d8; }
+.cal-l4 { fill: #6ea8fe; }
+.cal-l5 { fill: #a8cbff; }
+
+/* Hour matrix */
+.hour-matrix { max-width: 560px; }
+.hm-axis { fill: var(--text-dim); font-size: 9px; }
+.hm-cell { fill: var(--bg-elev2); }
+.hm-act1{fill:#16324f}.hm-act2{fill:#244e7d}.hm-act3{fill:#3a6cab}.hm-act4{fill:#548fd6}.hm-act5{fill:#6ea8fe}
+.hm-err1{fill:#4a1d22}.hm-err2{fill:#7a2730}.hm-err3{fill:#a8323f}.hm-err4{fill:#d24b58}.hm-err5{fill:#ff7a85}
+.hm-com1{fill:#143a23}.hm-com2{fill:#1d5a33}.hm-com3{fill:#2a8048}.hm-com4{fill:#3aa55e}.hm-com5{fill:#5fd97a}
+
+/* Project timeline */
+.proj-timeline { max-width: 760px; }
+.tl-grid { stroke: var(--border); stroke-width: 1; }
+.tl-axis { fill: var(--text-dim); font-size: 9px; }
+.tl-bar { cursor: pointer; opacity: 0.9; }
+.tl-bar:hover { opacity: 1; stroke: var(--accent); stroke-width: 1; }
+.tl-none { fill: var(--accent-dim); }
+.tl-ok { fill: #2a6e44; }
+.tl-warn { fill: var(--warn); }
+.tl-bad { fill: var(--err); }
+.tl-commit { stroke: var(--bg); stroke-width: 1; }
+.tl-c-high { fill: var(--running); }
+.tl-c-medium { fill: none; stroke: var(--running); stroke-width: 1.5; }
+.tl-c-low, .tl-c-none { fill: var(--text-dim); }
+.tl-legend { font-size: 11px; margin-top: 6px; }

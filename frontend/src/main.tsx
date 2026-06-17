@@ -15,6 +15,7 @@ import JournalPage from "./pages/JournalPage";
 import FilesPage from "./pages/FilesPage";
 import ComparePage from "./pages/ComparePage";
 import AskPage from "./pages/AskPage";
+import InsightsPage from "./pages/InsightsPage";
 import "./styles.css";
 import { initTheme } from "./components/ThemeToggle";
 
@@ -36,6 +37,7 @@ const router = createBrowserRouter([
       { path: "files", element: <FilesPage /> },
       { path: "compare", element: <ComparePage /> },
       { path: "stats", element: <StatsPage /> },
+      { path: "insights", element: <InsightsPage /> },
       { path: "ask", element: <AskPage /> },
       { path: "sessions/:sessionId", element: <SessionViewPage /> },
     ],

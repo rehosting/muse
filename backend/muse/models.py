@@ -287,6 +287,92 @@ class BoardSnapshot(BaseModel):
     cards: list[BoardCard] = Field(default_factory=list)
 
 
+class SessionOutcome(BaseModel):
+    """What one session cost vs. what it produced (evidence-based provenance)."""
+
+    session_id: str
+    title: str = ""
+    project_cwd: Optional[str] = None
+    provider: str = "claude"
+    model: Optional[str] = None
+    cost_usd: float = 0.0
+    work_tokens: int = 0
+    started: Optional[datetime] = None
+    ended: Optional[datetime] = None
+    duration_seconds: float = 0.0
+    commits_high: int = 0
+    commits_medium: int = 0
+    commits_low: int = 0
+    commit_subjects: list[str] = Field(default_factory=list)  # up to 3, high+medium
+    health: Optional[str] = None  # ok | warn | bad
+    error_count: int = 0
+
+
+class OutcomeRatio(BaseModel):
+    """Aggregate productivity for a key (a project or a model)."""
+
+    key: str
+    cost_usd: float = 0.0
+    commits: int = 0  # high+medium only
+    commits_low: int = 0
+    sessions: int = 0
+    commits_per_10usd: Optional[float] = None  # null when cost < $1 (noise)
+
+
+class HeatDay(BaseModel):
+    day: str  # local YYYY-MM-DD
+    cost_usd: float = 0.0
+    work_tokens: int = 0
+
+
+class MatrixCell(BaseModel):
+    dow: int  # 0=Mon … 6=Sun
+    hour: int  # 0–23 local
+    activity: int = 0  # assistant messages
+    cost_usd: float = 0.0
+    errors: int = 0
+    commits: int = 0
+
+
+class OutcomesResponse(BaseModel):
+    generated_at: datetime
+    range_days: int
+    confidence_policy: str = "high+medium"
+    outcomes: list[SessionOutcome] = Field(default_factory=list)
+    most_productive: list[SessionOutcome] = Field(default_factory=list)
+    most_wasteful: list[SessionOutcome] = Field(default_factory=list)
+    by_project: list[OutcomeRatio] = Field(default_factory=list)
+    by_model: list[OutcomeRatio] = Field(default_factory=list)
+    calendar: list[HeatDay] = Field(default_factory=list)
+    matrix: list[MatrixCell] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class TimelineCommit(BaseModel):
+    commit_hash: str
+    subject: str = ""
+    ts: Optional[datetime] = None
+    confidence: Optional[str] = None  # high | medium | low | None (unmatched)
+
+
+class TimelineSession(BaseModel):
+    session_id: str
+    title: str = ""
+    started: Optional[datetime] = None
+    ended: Optional[datetime] = None
+    cost_usd: float = 0.0
+    health: Optional[str] = None
+    commits: list[TimelineCommit] = Field(default_factory=list)
+
+
+class TimelineResponse(BaseModel):
+    project: str
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    sessions: list[TimelineSession] = Field(default_factory=list)
+    unmatched_commits: list[TimelineCommit] = Field(default_factory=list)
+
+
 class AIJob(BaseModel):
     """A queued/running/finished headless `claude -p` job (ask, summary, digest,
     retro). Stored in ~/.muse/muse.db; executed one-at-a-time by the AI worker."""
@@ -608,7 +694,7 @@ class LiveSession(BaseModel):
 
 
 ContextAction = Literal["none", "compact", "clear", "message", "stop"]
-IdleMode = Literal["message", "suggestion"]
+IdleMode = Literal["message", "suggestion", "ai"]
 
 
 class AutopilotConfig(BaseModel):

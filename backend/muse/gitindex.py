@@ -485,6 +485,53 @@ class GitIndex:
             out.append(d)
         return out
 
+    def commits_by_session(self, since_iso: Optional[str] = None) -> dict[str, list[dict]]:
+        """sid -> its linked commits (one query; for the insights page). Each:
+        {commit_hash, subject, committer_date, confidence, score, repo}."""
+        q = (
+            "SELECT cs.session_id, cs.confidence, cs.score, cs.repo, "
+            "gc.commit_hash, gc.subject, gc.committer_date FROM commit_session cs "
+            "JOIN git_commits gc ON gc.repo = cs.repo AND gc.commit_hash = cs.commit_hash"
+        )
+        params: tuple = ()
+        if since_iso:
+            q += " WHERE gc.committer_date >= ?"
+            params = (since_iso,)
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        out: dict[str, list[dict]] = {}
+        for r in rows:
+            out.setdefault(r["session_id"], []).append({
+                "commit_hash": r["commit_hash"], "subject": r["subject"],
+                "committer_date": r["committer_date"], "confidence": r["confidence"],
+                "score": r["score"], "repo": r["repo"],
+            })
+        return out
+
+    def commit_times(self, since_iso: Optional[str] = None) -> list[str]:
+        """All committer_dates (for the hour×weekday matrix)."""
+        q = "SELECT committer_date FROM git_commits"
+        params: tuple = ()
+        if since_iso:
+            q += " WHERE committer_date >= ?"
+            params = (since_iso,)
+        with self._lock:
+            return [r["committer_date"] for r in self._conn.execute(q, params).fetchall()
+                    if r["committer_date"]]
+
+    def commits_for_repo(self, toplevel: str, since_iso: Optional[str] = None) -> list[dict]:
+        """Commits in one repo (for the project timeline)."""
+        q = ("SELECT commit_hash, subject, committer_date, ref_hint FROM git_commits "
+             "WHERE repo=?")
+        params: list = [toplevel]
+        if since_iso:
+            q += " AND committer_date >= ?"
+            params.append(since_iso)
+        q += " ORDER BY committer_date"
+        with self._lock:
+            rows = self._conn.execute(q, params).fetchall()
+        return [dict(r) for r in rows]
+
     def _files_for(self, repo: str, commit_hash: str) -> list[str]:
         with self._lock:
             rows = self._conn.execute(

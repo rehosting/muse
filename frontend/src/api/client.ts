@@ -4,7 +4,9 @@ import type {
   Annotations,
   BoardSnapshot,
   CommitSearchHit,
+  OutcomesResponse,
   SessionCommit,
+  TimelineResponse,
   AutopilotPolicy,
   AutopilotState,
   AlertEvent,
@@ -36,9 +38,16 @@ import type {
   Thread,
 } from "./types";
 
+function notifyAuthRequired(status: number): void {
+  // Remote access: a 401 means the auth cookie is missing/expired — LoginGate
+  // listens for this and shows the token prompt.
+  if (status === 401) window.dispatchEvent(new Event("muse:auth-required"));
+}
+
 async function getJSON<T>(url: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal });
   if (!res.ok) {
+    notifyAuthRequired(res.status);
     throw new Error(`${res.status} ${res.statusText} for ${url}`);
   }
   return res.json() as Promise<T>;
@@ -51,6 +60,7 @@ async function sendJSON<T>(method: string, url: string, body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) {
+    notifyAuthRequired(res.status);
     throw new Error(`${res.status} ${res.statusText} for ${url}`);
   }
   return res.json() as Promise<T>;
@@ -244,6 +254,24 @@ export const api = {
     sendJSON<AIJob>("POST", "/api/ai/retro/weekly", { week_start: weekStart ?? "" }),
 
   getAiStatus: () => getJSON<AIStatus>("/api/ai/status"),
+
+  draftReply: (sessionId: string) =>
+    sendJSON<AIJob>("POST", `/api/sessions/${sessionId}/draft-reply`),
+
+  diagnoseSession: (sessionId: string) =>
+    sendJSON<AIJob>("POST", `/api/sessions/${sessionId}/diagnose`),
+
+  triageBoard: (sessionIds: string[]) =>
+    sendJSON<AIJob>("POST", "/api/board/triage", { session_ids: sessionIds }),
+
+  // --- insights (outcome-aware analytics) ---
+  getInsights: (days = 30) =>
+    getJSON<OutcomesResponse>(`/api/insights?days=${days}`),
+
+  getInsightsTimeline: (project: string, days = 30) =>
+    getJSON<TimelineResponse>(
+      `/api/insights/timeline?project=${encodeURIComponent(project)}&days=${days}`,
+    ),
 
   // --- code provenance ---
   getSessionCommits: (sessionId: string) =>

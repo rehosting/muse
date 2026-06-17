@@ -319,6 +319,30 @@ class HealthStore:
             ).fetchall()
         return {r["session_id"]: r["score"] for r in rows}
 
+    def snapshot_rows(self) -> dict[str, dict]:
+        """sid -> {score, error_count, retry_loops, error_spirals, denials}
+        in one read (for the insights outcomes view)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, score, error_count, detail_json FROM session_health"
+            ).fetchall()
+        out: dict[str, dict] = {}
+        for r in rows:
+            detail = {}
+            if r["detail_json"]:
+                try:
+                    detail = json.loads(r["detail_json"])
+                except ValueError:
+                    detail = {}
+            out[r["session_id"]] = {
+                "score": r["score"],
+                "error_count": r["error_count"],
+                "retry_loops": len(detail.get("retry_loops") or []),
+                "error_spirals": len(detail.get("error_spirals") or []),
+                "denials": len(detail.get("permission_denials") or []),
+            }
+        return out
+
     def get(self, session_id: str) -> Optional[dict]:
         with self._lock:
             row = self._conn.execute(

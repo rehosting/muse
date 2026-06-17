@@ -228,6 +228,16 @@ class FileIndex:
             ).fetchall()
         return {r["session_id"]: (r["first_ts"], r["last_ts"]) for r in rows}
 
+    def error_times(self, since_iso: Optional[str] = None) -> list[str]:
+        """Timestamps of every errored file op (for the hour×weekday matrix)."""
+        q = "SELECT ts FROM file_activity WHERE is_error=1 AND ts IS NOT NULL"
+        params: tuple = ()
+        if since_iso:
+            q += " AND ts >= ?"
+            params = (since_iso,)
+        with self._lock:
+            return [r["ts"] for r in self._conn.execute(q, params).fetchall()]
+
     def edited_files_by_session(self) -> dict[str, set[str]]:
         """session_id -> files it edited/wrote (bulk form of edited_files)."""
         with self._lock:
