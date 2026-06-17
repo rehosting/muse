@@ -82,6 +82,100 @@ def pack_for_session(
     return "\n\n".join(parts)
 
 
+REPLY_BUDGET_CHARS = 24_000
+
+
+def pack_for_reply(
+    service, session_id: str, pane_text: str = "", char_budget: int = REPLY_BUDGET_CHARS
+) -> Optional[str]:
+    """Context for drafting the user's next reply to a live session: a small
+    recent-weighted digest (the digest's head+tail fill favors recent steps),
+    the structured brief signals, the user's own recent messages as style
+    examples, and the raw pane capture (the screen shows what the transcript
+    can't — prompts, banners, the input line)."""
+    block = _digest_block(service, session_id, char_budget)
+    if block is None:
+        return None
+    parts = [block]
+    brief = service.build_reentry_brief(session_id) or {}
+    todos = brief.get("open_todos") or []
+    if todos:
+        parts.append("Open todos:\n" + "\n".join(f"- {t}" for t in todos[:8]))
+    style = _recent_user_messages(service, session_id, limit=5)
+    if style:
+        parts.append(
+            "The user's recent replies in this session (match their tone and "
+            "brevity):\n" + "\n".join(f"> {m}" for m in style)
+        )
+    if pane_text.strip():
+        parts.append("Current terminal screen:\n```\n" + pane_text.strip()[-2000:] + "\n```")
+    return "\n\n".join(parts)
+
+
+def _recent_user_messages(service, session_id: str, limit: int = 5) -> list[str]:
+    """Last few substantive user prompts (skips tool-result carriers and
+    command noise) — served from the mtime-keyed thread cache, so this is
+    free right after the digest build."""
+    thread = service.get_thread(session_id)
+    if thread is None:
+        return []
+    out: list[str] = []
+    for item in reversed(thread.items):
+        if item.role != "user" or not (item.text or "").strip():
+            continue
+        text = item.text.strip()
+        if text.startswith(("<", "[Request interrupted")):
+            continue  # command wrappers / interrupts, not the user's voice
+        out.append(text.splitlines()[0][:200])
+        if len(out) >= limit:
+            break
+    return list(reversed(out))
+
+
+def pack_for_diagnose(
+    service, session_id: str, char_budget: int = REPLY_BUDGET_CHARS
+) -> Optional[str]:
+    """Tail digest + the detected failure patterns for a stuck session."""
+    block = _digest_block(service, session_id, char_budget)
+    if block is None:
+        return None
+    parts = [block]
+    health = service.get_session_health(session_id) or {}
+    findings: list[str] = []
+    for loop in health.get("retry_loops") or []:
+        findings.append(
+            f"- retry loop: {loop.get('tool')} ×{loop.get('times')} on "
+            f"{str(loop.get('label') or '')[:80]!r}"
+        )
+    for sp in health.get("error_spirals") or []:
+        findings.append(f"- error spiral: {sp.get('errors')}/{sp.get('window')} results errored")
+    denials = health.get("permission_denials") or []
+    if denials:
+        findings.append(f"- permission denials ×{len(denials)}")
+    if health.get("error_count"):
+        findings.append(f"- total errors: {health['error_count']}")
+    if findings:
+        parts.append("Detected failure patterns:\n" + "\n".join(findings))
+    return "\n\n".join(parts)
+
+
+TRIAGE_BUDGET_CHARS = 60_000
+
+
+def pack_for_triage(service, session_ids: list[str]) -> Optional[str]:
+    """Tiny digests of every attention card, for the one-batched-job triage."""
+    ids = session_ids[:8]
+    if not ids:
+        return None
+    share = TRIAGE_BUDGET_CHARS // len(ids)
+    blocks = [b for sid in ids if (b := _digest_block(service, sid, share))]
+    if not blocks:
+        return None
+    return (
+        "Sessions awaiting the user's attention:\n\n" + "\n\n".join(blocks)
+    )
+
+
 def _pack_days(service, days: list[str], char_budget: int) -> Optional[str]:
     """Digests + notes for a list of YYYY-MM-DD local days (shared budget)."""
     sessions: list = []

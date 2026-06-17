@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
+import AiActionButton from "../AiActionButton";
 
 /** Reply to a live Claude session from the board: text → its tmux pane.
  * Disabled (with the reason) when the session has no matched pane. */
@@ -78,6 +79,15 @@ export default function ReplyBox({
       >
         Esc
       </button>
+      <AiActionButton
+        label="✦"
+        title="AI-draft a reply (prefills the box — you edit and send)"
+        enqueue={() => api.draftReply(sessionId)}
+        onDone={(job) => {
+          const draft = (job.result as { draft?: string } | null)?.draft;
+          if (draft) setText(draft);
+        }}
+      />
       {state === "error" && error && <div className="reply-error">⚠ {error}</div>}
     </div>
   );

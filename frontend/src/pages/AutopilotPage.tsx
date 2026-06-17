@@ -303,6 +303,7 @@ function PolicyEditor({
         <select value={draft.idle_mode} onChange={(e) => set("idle_mode", e.target.value as IdleMode)}>
           <option value="message">send a fixed message</option>
           <option value="suggestion">accept Claude's suggested follow-up (experimental)</option>
+          <option value="ai">✦ AI-drafted reply (guarded, budget-capped)</option>
         </select>
       </label>
 
@@ -316,6 +317,15 @@ function PolicyEditor({
             onChange={(e) => set("message", e.target.value)}
           />
         </label>
+      ) : draft.idle_mode === "ai" ? (
+        <p className="ap-hint">
+          muse asks Claude (headlessly) to draft the next reply from the session's
+          recent context, then types it in — only if the session is still idle and
+          unchanged when the draft lands. Costs real tokens; capped by
+          MUSE_AI_DAILY_BUDGET_USD (default $2/day) plus the max-sends and interval
+          limits below. Never answers permission prompts. Every send/discard is in
+          the log.
+        </p>
       ) : (
         <p className="ap-hint">
           Autopilot will accept Claude Code's inline suggested prompt (→) and submit it. If there's
