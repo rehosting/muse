@@ -430,6 +430,88 @@ export interface LaunchResult {
   command: string;
 }
 
+export interface SessionOutcome {
+  session_id: string;
+  title: string;
+  project_cwd: string | null;
+  provider: string;
+  model: string | null;
+  cost_usd: number;
+  work_tokens: number;
+  started: string | null;
+  ended: string | null;
+  duration_seconds: number;
+  commits_high: number;
+  commits_medium: number;
+  commits_low: number;
+  commit_subjects: string[];
+  health: "ok" | "warn" | "bad" | null;
+  error_count: number;
+}
+
+export interface OutcomeRatio {
+  key: string;
+  cost_usd: number;
+  commits: number;
+  commits_low: number;
+  sessions: number;
+  commits_per_10usd: number | null;
+}
+
+export interface HeatDay {
+  day: string;
+  cost_usd: number;
+  work_tokens: number;
+}
+
+export interface MatrixCell {
+  dow: number;
+  hour: number;
+  activity: number;
+  cost_usd: number;
+  errors: number;
+  commits: number;
+}
+
+export interface OutcomesResponse {
+  generated_at: string;
+  range_days: number;
+  confidence_policy: string;
+  outcomes: SessionOutcome[];
+  most_productive: SessionOutcome[];
+  most_wasteful: SessionOutcome[];
+  by_project: OutcomeRatio[];
+  by_model: OutcomeRatio[];
+  calendar: HeatDay[];
+  matrix: MatrixCell[];
+  notes: string[];
+}
+
+export interface TimelineCommit {
+  commit_hash: string;
+  subject: string;
+  ts: string | null;
+  confidence: "high" | "medium" | "low" | null;
+}
+
+export interface TimelineSession {
+  session_id: string;
+  title: string;
+  started: string | null;
+  ended: string | null;
+  cost_usd: number;
+  health: "ok" | "warn" | "bad" | null;
+  commits: TimelineCommit[];
+}
+
+export interface TimelineResponse {
+  project: string;
+  start: string | null;
+  end: string | null;
+  sessions: TimelineSession[];
+  unmatched_commits: TimelineCommit[];
+}
+
 export interface SessionCommit {
   repo: string;
   commit_hash: string;
@@ -545,7 +627,7 @@ export interface LiveSession {
 }
 
 export type ContextAction = "none" | "compact" | "clear" | "message" | "stop";
-export type IdleMode = "message" | "suggestion";
+export type IdleMode = "message" | "suggestion" | "ai";
 
 export interface AutopilotConfig {
   session_id: string;

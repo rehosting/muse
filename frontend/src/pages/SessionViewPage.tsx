@@ -39,7 +39,13 @@ export default function SessionViewPage() {
     return raw ? raw.split(",").filter(Boolean) : [];
   }, [searchParams]);
 
-  const layout = (Number(searchParams.get("view")) || 3) as LayoutMode;
+  // Phones default to layout 1 (conversation only) — the 3-pane tool log is
+  // unusable on a narrow screen. An explicit ?view= always wins.
+  const _defaultLayout =
+    typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches
+      ? 1
+      : 3;
+  const layout = (Number(searchParams.get("view")) || _defaultLayout) as LayoutMode;
 
   const [main, setMain] = useState<Thread | null>(null);
   const [subThreads, setSubThreads] = useState<Record<string, Thread>>({});
