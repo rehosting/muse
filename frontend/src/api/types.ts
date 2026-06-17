@@ -72,6 +72,18 @@ export interface Thread {
   agent_type: string | null;
   description: string | null;
   parent_tool_use_id: string | null;
+  // Windowed loads: total count in the full thread + index of items[0] within it.
+  // null when the response is the complete thread.
+  total_items: number | null;
+  window_start: number | null;
+}
+
+export interface ThreadWindowOpts {
+  limit?: number;
+  anchor?: "head" | "tail";
+  before?: number; // ship the `limit` items ending just before this full-thread index
+  after?: number; // ship the `limit` items starting at this full-thread index
+  around?: string; // center the window on this message uuid / tool_use_id
 }
 
 export interface SessionSummary {

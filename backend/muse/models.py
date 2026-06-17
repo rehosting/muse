@@ -181,6 +181,10 @@ class Thread(BaseModel):
     context_window: Optional[int] = None  # provider-supplied window (e.g. Codex)
     items: list[ThreadItem] = Field(default_factory=list)
     usage_total: Usage = Field(default_factory=Usage)
+    # Windowed loads: total_items is the count in the FULL thread, window_start the
+    # index of items[0] within it. None => the response is the complete thread.
+    total_items: Optional[int] = None
+    window_start: Optional[int] = None
     # Set only for subagent threads:
     agent_id: Optional[str] = None
     agent_type: Optional[str] = None
