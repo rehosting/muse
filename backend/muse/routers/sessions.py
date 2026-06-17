@@ -71,8 +71,20 @@ def search(
 
 
 @router.get("/sessions/{session_id}", response_model=Thread)
-def get_thread(session_id: str, request: Request) -> Thread:
-    thread = _service(request).get_thread(session_id)
+def get_thread(
+    session_id: str,
+    request: Request,
+    limit: int | None = None,
+    anchor: str | None = None,
+    before: int | None = None,
+    after: int | None = None,
+    around: str | None = None,
+) -> Thread:
+    # No params => full thread (back-compat). Windowing args ship only the slice
+    # the viewer needs (see SessionService.get_thread_window).
+    thread = _service(request).get_thread_window(
+        session_id, limit=limit, anchor=anchor, before=before, after=after, around=around
+    )
     if thread is None:
         raise HTTPException(status_code=404, detail="session not found")
     return thread

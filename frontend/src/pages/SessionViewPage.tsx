@@ -6,6 +6,7 @@ import type {
   SessionCommit,
   SessionEvent,
   SessionLineage,
+  SubagentRef,
   Thread,
   ThreadItem,
   ToolResult,
@@ -31,6 +32,23 @@ import ResizableSplit from "../components/ResizableSplit";
 import { useSessionStream } from "../hooks/useSessionStream";
 import { toolMap } from "../util/toolIndex";
 import { sessionStats } from "../util/stats";
+
+// How many thread items to fetch per window. Tuned so a window is a small payload
+// (a few hundred KB before gzip) while rarely needing a second fetch on open.
+const WINDOW = 400;
+
+/** Whether the loaded window reaches the live end of the thread (so live appends
+ * belong here, and "jump to latest" is already showing it). */
+function atTail(t: Thread): boolean {
+  if (t.total_items == null || t.window_start == null) return true; // full thread
+  return t.window_start + t.items.length >= t.total_items;
+}
+function hasEarlier(t: Thread | null): boolean {
+  return !!t && t.window_start != null && t.window_start > 0;
+}
+function hasLater(t: Thread | null): boolean {
+  return !!t && !atTail(t);
+}
 
 export default function SessionViewPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -89,13 +107,29 @@ export default function SessionViewPage() {
   const [commits, setCommits] = useState<SessionCommit[]>([]);
   const [errSignal, setErrSignal] = useState(0);
 
+  // Subagent spawns for the WHOLE session (window-independent) — the main thread
+  // is loaded a window at a time, so the subagent menu can't be derived from it.
+  const [rootSubagents, setRootSubagents] = useState<SubagentRef[]>([]);
+  // Guards against overlapping window fetches (scroll can fire many times).
+  const windowLoading = useRef(false);
+
   // ---- data loading ----
   useEffect(() => {
     if (!sessionId) return;
     setMain(null);
     setSelectedToolId(null);
     setLineage(null);
-    api.getThread(sessionId).then(setMain).catch((e) => setError(String(e)));
+    setRootSubagents([]);
+    // Windowed first paint: the server picks head (finished) or tail (live).
+    api.getThread(sessionId, { limit: WINDOW }).then(setMain).catch((e) => setError(String(e)));
+    api
+      .getEvents(sessionId)
+      .then((evs) =>
+        setRootSubagents(
+          evs.flatMap((e) => (e.kind === "subagent" && e.subagent ? [e.subagent] : [])),
+        ),
+      )
+      .catch(() => setRootSubagents([]));
     api.getLineage(sessionId).then(setLineage).catch(() => setLineage(null));
     api
       .getAnnotations(sessionId)
@@ -150,8 +184,14 @@ export default function SessionViewPage() {
         const seen = new Set(prev.items.map((i) => i.uuid));
         const fresh = items.filter((i) => !i.is_sidechain && !seen.has(i.uuid));
         if (!fresh.length) return prev;
+        // The window is showing earlier history (not the live tail): don't graft
+        // live items onto a non-contiguous window — just record that more exists
+        // so "jump to latest" re-fetches the tail. Otherwise append + autoscroll.
+        const bumped =
+          prev.total_items != null ? prev.total_items + fresh.length : prev.total_items;
+        if (!atTail(prev)) return { ...prev, total_items: bumped };
         setScrollNonce((n) => n + 1); // request auto-scroll to bottom
-        return { ...prev, items: [...prev.items, ...fresh] };
+        return { ...prev, items: [...prev.items, ...fresh], total_items: bumped };
       });
     },
     [markLive],
@@ -207,11 +247,83 @@ export default function SessionViewPage() {
     [sessionId],
   );
 
+  // ---- ranged window loading (main thread only; subagents load whole) ----
+  // Fetch the window of older items and PREPEND it (contiguous: `before` ends
+  // exactly at our current first index, so no overlap).
+  const loadEarlier = useCallback(() => {
+    if (!sessionId || windowLoading.current) return;
+    setMain((prev) => {
+      if (!prev || !hasEarlier(prev)) return prev;
+      windowLoading.current = true;
+      api
+        .getThread(sessionId, { limit: WINDOW, before: prev.window_start ?? 0 })
+        .then((w) =>
+          setMain((cur) =>
+            cur
+              ? { ...cur, items: [...w.items, ...cur.items], window_start: w.window_start }
+              : cur,
+          ),
+        )
+        .catch(() => {})
+        .finally(() => (windowLoading.current = false));
+      return prev;
+    });
+  }, [sessionId]);
+
+  const loadLater = useCallback(() => {
+    if (!sessionId || windowLoading.current) return;
+    setMain((prev) => {
+      if (!prev || !hasLater(prev)) return prev;
+      windowLoading.current = true;
+      const after = (prev.window_start ?? 0) + prev.items.length;
+      api
+        .getThread(sessionId, { limit: WINDOW, after })
+        .then((w) =>
+          setMain((cur) => {
+            if (!cur) return cur;
+            const seen = new Set(cur.items.map((i) => i.uuid));
+            const fresh = w.items.filter((i) => !seen.has(i.uuid));
+            return { ...cur, items: [...cur.items, ...fresh], total_items: w.total_items };
+          }),
+        )
+        .catch(() => {})
+        .finally(() => (windowLoading.current = false));
+      return prev;
+    });
+  }, [sessionId]);
+
+  // Ensure the window contains `id` (a message uuid or tool_use_id) before a jump.
+  // Resolves true once present (fetching an around-window if needed), false if the
+  // id exists nowhere. Subagent threads load whole, so this only fetches for main.
+  const ensureLoaded = useCallback(
+    async (id: string): Promise<boolean> => {
+      if (!sessionId || agentStack.length > 0) return true;
+      const present = (t: Thread | null) =>
+        !!t &&
+        t.items.some(
+          (it) => it.uuid === id || it.blocks.some((b) => b.tool_use?.id === id),
+        );
+      if (present(main)) return true;
+      try {
+        const w = await api.getThread(sessionId, { limit: WINDOW, around: id });
+        setMain(w);
+        return present(w);
+      } catch {
+        return false;
+      }
+    },
+    [sessionId, agentStack.length, main],
+  );
+
   // ---- current thread (main or deepest subagent) ----
   const current: Thread | null =
     agentStack.length > 0 ? subThreads[agentStack[agentStack.length - 1]] ?? null : main;
 
   const toolsById = useMemo(() => (current ? toolMap(current.items) : new Map()), [current]);
+  // Latest toolsById for callbacks that run after an async window swap (a rAF
+  // closure would otherwise capture a stale map).
+  const toolsByIdRef = useRef(toolsById);
+  toolsByIdRef.current = toolsById;
   const ctxWindow = useMemo(
     () => (current ? sessionStats(current).contextWindow : 200_000),
     [current],
@@ -234,11 +346,17 @@ export default function SessionViewPage() {
   // (backlinks, notes, health, re-entry, timeline). A tool uuid routes through
   // selection so the detail pane opens too.
   const focusInConversation = useCallback(
-    (uuid: string) => {
-      if (toolsById.has(uuid)) selectTool(uuid, "log");
-      else convViewRef.current?.scrollToUuid(uuid, "center");
+    async (uuid: string) => {
+      // The target may be outside the loaded window — fetch the window around it
+      // first, then scroll once it's rendered.
+      const ok = await ensureLoaded(uuid);
+      if (!ok) return;
+      requestAnimationFrame(() => {
+        if (toolsByIdRef.current.has(uuid)) selectTool(uuid, "log");
+        else convViewRef.current?.scrollToUuid(uuid, "center");
+      });
     },
-    [toolsById, selectTool],
+    [ensureLoaded, selectTool],
   );
 
   // Deep link: ?focus=<message uuid | tool_use_id> selects + scrolls on load.
@@ -316,6 +434,7 @@ export default function SessionViewPage() {
   // Subagent tree: top-level from the main thread, nested levels filled in from
   // any subagent threads already loaded (visiting a subagent reveals its children).
   const subagentTree = useMemo<SubNode[]>(() => {
+    // Nested levels come from already-loaded subagent threads (they load whole).
     const build = (thread: Thread | null | undefined, parentPath: string[]): SubNode[] => {
       if (!thread) return [];
       const nodes: SubNode[] = [];
@@ -336,8 +455,16 @@ export default function SessionViewPage() {
       }
       return nodes;
     };
-    return build(main, []);
-  }, [main, subThreads]);
+    // Top level comes from the full event timeline, NOT main.items — the main
+    // thread is windowed, so its items can't enumerate every subagent spawn.
+    return rootSubagents.map((sa) => ({
+      agentId: sa.agent_id,
+      agentType: sa.agent_type,
+      description: sa.description,
+      path: [sa.agent_id],
+      children: build(subThreads[sa.agent_id], [sa.agent_id]),
+    }));
+  }, [rootSubagents, subThreads]);
 
   const subagentCount = useMemo(() => {
     let c = 0;
@@ -368,28 +495,49 @@ export default function SessionViewPage() {
   // tool detail (and sync); every other entry opens in the Detail pane too, and
   // also scrolls the conversation to that entry.
   const onSelectEvent = useCallback(
-    (ev: SessionEvent) => {
+    async (ev: SessionEvent) => {
       if (ev.kind === "subagent" && ev.subagent) {
         openSubagent(ev.subagent.agent_id);
         return;
       }
-      if (ev.tool_use_id && toolsById.has(ev.tool_use_id)) {
-        selectTool(ev.tool_use_id, "log");
-        return;
+      // The timeline is complete even when the conversation window isn't — make
+      // sure the target is loaded before selecting/scrolling to it.
+      if (ev.tool_use_id) {
+        const ok = await ensureLoaded(ev.tool_use_id);
+        if (ok && toolsByIdRef.current.has(ev.tool_use_id)) {
+          selectTool(ev.tool_use_id, "log");
+          return;
+        }
       }
       setSelectedToolId(null);
       setSelectedEvent(ev);
       if (layout === 1) setOverlayOpen(true);
-      if (ev.anchor_uuid) convViewRef.current?.scrollToUuid(ev.anchor_uuid, "center");
+      if (ev.anchor_uuid) {
+        const ok = await ensureLoaded(ev.anchor_uuid);
+        if (ok) requestAnimationFrame(() => convViewRef.current?.scrollToUuid(ev.anchor_uuid!, "center"));
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectTool, toolsById, layout],
+    [selectTool, ensureLoaded, layout],
   );
 
   if (error) return <div className="error-banner">{error}</div>;
   if (!main || !current) return <div className="empty">Loading session…</div>;
 
-  const jumpToBottom = () => convViewRef.current?.scrollToBottom();
+  const jumpToBottom = async () => {
+    // If we're showing earlier history, the tail isn't loaded — fetch it first.
+    if (sessionId && agentStack.length === 0 && main && !atTail(main)) {
+      try {
+        const t = await api.getThread(sessionId, { limit: WINDOW, anchor: "tail" });
+        setMain(t);
+        requestAnimationFrame(() => convViewRef.current?.scrollToBottom());
+        return;
+      } catch {
+        /* fall through to a plain scroll */
+      }
+    }
+    convViewRef.current?.scrollToBottom();
+  };
   const conversation = (
     <div className="panel panel-conversation">
       <div className="panel-label">Conversation</div>
@@ -411,6 +559,15 @@ export default function SessionViewPage() {
           bookmarks={bookmarks}
           onSaveBookmark={saveBookmark}
           onRemoveBookmark={removeBookmark}
+          hasEarlier={agentStack.length === 0 && hasEarlier(main)}
+          hasLater={agentStack.length === 0 && hasLater(main)}
+          onNeedEarlier={loadEarlier}
+          onNeedLater={loadLater}
+          landing={
+            agentStack.length === 0 && main && atTail(main) && hasEarlier(main)
+              ? "bottom"
+              : "top"
+          }
         />
       </div>
       <button className="jump-bottom" title="Jump to latest" onClick={jumpToBottom}>
@@ -468,7 +625,7 @@ export default function SessionViewPage() {
           <FileChanges
             files={files}
             selectedToolId={selectedToolId}
-            onSelectOp={(id) => selectTool(id, "log")}
+            onSelectOp={(id) => focusInConversation(id)}
           />
         ) : (
           <CommitsPanel commits={commits} projectCwd={current?.project_cwd ?? null} />
@@ -511,11 +668,7 @@ export default function SessionViewPage() {
         onOpenSubagentPath={setAgentPath}
         onRename={renameSession}
         lineage={lineage}
-        onJumpToCompaction={(uuid) => {
-          convItemRefs.current
-            .get(uuid)
-            ?.scrollIntoView({ block: "center", behavior: "smooth" });
-        }}
+        onJumpToCompaction={(uuid) => focusInConversation(uuid)}
       />
 
       {sessionId && agentStack.length === 0 && (

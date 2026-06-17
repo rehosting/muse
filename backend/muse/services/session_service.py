@@ -430,6 +430,82 @@ class SessionService:
                 thread.title_source = "custom"
         return thread
 
+    def get_thread_window(
+        self,
+        session_id: str,
+        *,
+        limit: Optional[int] = None,
+        anchor: Optional[str] = None,
+        before: Optional[int] = None,
+        after: Optional[int] = None,
+        around: Optional[str] = None,
+    ) -> Optional[Thread]:
+        """A contiguous slice of a thread's items + total/offset metadata.
+
+        The full parse is cached, so this is cheap — the win is not re-serializing
+        ~10k items / shipping ~11MB when the viewer only shows a few hundred at a
+        time. With no windowing args the complete thread is returned (back-compat
+        for MCP and the subagent path), annotated with total_items/window_start.
+
+        Window selection precedence: around (center on a uuid, for deep-link
+        jumps) > before (scroll up) > after (scroll down) > anchor ("head" for a
+        finished session you read top-down, "tail" for a live one).
+        """
+        thread = self.get_thread(session_id)
+        if thread is None:
+            return None
+        items = thread.items
+        total = len(items)
+
+        if limit is None and around is None and before is None and after is None:
+            return thread.model_copy(update={"total_items": total, "window_start": 0})
+
+        lim = max(1, limit or 400)
+        if around is not None:
+            # Match a message uuid, or the item carrying a tool_use with this id
+            # (jump sources sometimes only hold a tool_use_id, not the item uuid).
+            idx = next((i for i, it in enumerate(items) if it.uuid == around), None)
+            if idx is None:
+                idx = next(
+                    (
+                        i
+                        for i, it in enumerate(items)
+                        for b in it.blocks
+                        if b.tool_use and b.tool_use.id == around
+                    ),
+                    None,
+                )
+            if idx is None:
+                start, end = max(0, total - lim), total  # unknown uuid -> tail
+            else:
+                start = max(0, idx - lim // 2)
+                end = min(total, start + lim)
+                start = max(0, end - lim)
+        elif before is not None:
+            end = max(0, min(before, total))
+            start = max(0, end - lim)
+        elif after is not None:
+            start = max(0, min(after, total))
+            end = min(total, start + lim)
+        elif anchor == "head" or (anchor is None and not self._is_live(session_id)):
+            # A finished session is read top-down; default its first window to the head.
+            start, end = 0, min(lim, total)
+        else:  # tail — explicit, or the default for a live session (latest activity)
+            start, end = max(0, total - lim), total
+
+        return thread.model_copy(
+            update={"items": items[start:end], "total_items": total, "window_start": start}
+        )
+
+    def _is_live(self, session_id: str) -> bool:
+        """Whether the session's transcript was written recently enough to be
+        mid-task — used only to default a windowed load to head (finished) vs tail
+        (live). Reuses the cheap (mtime, size) freshness key; never parses."""
+        key = self._change_key(session_id, None)
+        if key is None:
+            return False
+        return (time.time() - key[0]) <= get_settings().running_threshold_seconds
+
     # --- notifications (outbound push via ntfy) -----------------------------
     def get_notify_config(self) -> NotifyConfig:
         return self.notify_store.get_config()

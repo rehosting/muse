@@ -36,6 +36,7 @@ import type {
   SessionSummary,
   StatsResponse,
   Thread,
+  ThreadWindowOpts,
 } from "./types";
 
 function notifyAuthRequired(status: number): void {
@@ -74,8 +75,18 @@ export const api = {
   search: (q: string, limit = 30, signal?: AbortSignal) =>
     getJSON<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}`, signal),
 
-  getThread: (sessionId: string) =>
-    getJSON<Thread>(`/api/sessions/${sessionId}`),
+  // No opts => full thread (back-compat). With a limit, the server ships only that
+  // window (default anchor: head for finished sessions, tail for live ones).
+  getThread: (sessionId: string, opts?: ThreadWindowOpts) => {
+    const qs = new URLSearchParams();
+    if (opts?.limit != null) qs.set("limit", String(opts.limit));
+    if (opts?.anchor) qs.set("anchor", opts.anchor);
+    if (opts?.before != null) qs.set("before", String(opts.before));
+    if (opts?.after != null) qs.set("after", String(opts.after));
+    if (opts?.around) qs.set("around", opts.around);
+    const q = qs.toString();
+    return getJSON<Thread>(`/api/sessions/${sessionId}${q ? `?${q}` : ""}`);
+  },
 
   getSubagent: (sessionId: string, agentId: string) =>
     getJSON<Thread>(`/api/sessions/${sessionId}/subagents/${agentId}`),

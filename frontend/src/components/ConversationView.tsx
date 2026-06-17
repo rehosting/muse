@@ -53,7 +53,20 @@ interface Props {
   /** The scroll container that wraps this view (the viewer's `.panel-scroll`).
    * Required for virtualize to anchor correctly; falls back to walking the DOM. */
   scrollParentRef?: React.RefObject<HTMLElement>;
+  /** Ranged loading: items is a contiguous window of a larger thread. When the
+   * user scrolls within EDGE rows of an unloaded edge, the viewer fetches the
+   * adjacent window. The parent guards against overlapping fetches. */
+  hasEarlier?: boolean;
+  hasLater?: boolean;
+  onNeedEarlier?: () => void;
+  onNeedLater?: () => void;
+  /** Where a freshly-loaded thread lands. "bottom" for a live session opened on
+   * its tail window (show the latest); "top" otherwise (read from the start). */
+  landing?: "top" | "bottom";
 }
+
+// Fire a load when the rendered window comes within this many rows of an edge.
+const EDGE = 8;
 
 // Below this many items, virtualization is pure overhead — render everything.
 const VIRT_THRESHOLD = 200;
@@ -111,6 +124,11 @@ function ConversationView(
     highlightUuid = null,
     virtualize = false,
     scrollParentRef,
+    hasEarlier = false,
+    hasLater = false,
+    onNeedEarlier,
+    onNeedLater,
+    landing = "top",
   }: Props,
   ref: React.Ref<ConversationHandle>,
 ) {
@@ -148,16 +166,33 @@ function ConversationView(
   const heights = useRef<number[]>([]);
   const cum = useRef<number[]>([0]);
   const firstUuid = useRef<string | null>(null);
+  // Set when a window is PREPENDED (older items loaded above): the layout effect
+  // consumes it to shift the render range + scrollTop so the viewport stays put.
+  const prependShift = useRef(0);
   const [range, setRange] = useState({ start: 0, end: Math.min(N, 60) });
   // Bump to force a re-render after measuring changes the spacer heights.
   const [, setTick] = useState(0);
 
-  // Reset/resize the height cache when the thread changes. Transcripts only
-  // APPEND, so on growth we keep prior measurements (indices are stable); a new
-  // thread (different first item) starts fresh.
-  if (firstUuid.current !== (items[0]?.uuid ?? null)) {
-    firstUuid.current = items[0]?.uuid ?? null;
-    heights.current = new Array(N).fill(EST_HEIGHT);
+  // Reconcile the height cache with the current items. Two growth shapes:
+  //  - APPEND (live activity / load-later): items[0] unchanged, indices stable —
+  //    keep prior measurements, extend with estimates.
+  //  - PREPEND (load-earlier): older items inserted at the front, every index
+  //    shifts right by K. Shift the cache to keep measurements aligned and flag
+  //    the layout effect to anchor the scroll. A genuinely new thread resets.
+  const curFirst = items[0]?.uuid ?? null;
+  if (firstUuid.current !== curFirst) {
+    const k = firstUuid.current ? items.findIndex((it) => it.uuid === firstUuid.current) : -1;
+    if (k > 0) {
+      const shifted = new Array(N).fill(EST_HEIGHT);
+      for (let i = 0; i < heights.current.length && i + k < N; i++) {
+        shifted[i + k] = heights.current[i];
+      }
+      heights.current = shifted;
+      prependShift.current = k;
+    } else {
+      heights.current = new Array(N).fill(EST_HEIGHT);
+    }
+    firstUuid.current = curFirst;
   } else if (heights.current.length !== N) {
     const next = new Array(N).fill(EST_HEIGHT);
     for (let i = 0; i < Math.min(N, heights.current.length); i++) next[i] = heights.current[i];
@@ -204,7 +239,25 @@ function ConversationView(
     const start = lastAtMost(c, Math.max(0, viewTop));
     const end = Math.min(N, lastAtMost(c, viewBottom) + 2);
     setRange((r) => (r.start === start && r.end === end ? r : { start, end }));
-  }, [active, findScroller, listTop, N]);
+    // Near an unloaded edge => ask the parent for the adjacent window (it guards
+    // against overlapping fetches, so calling on every scroll frame is safe).
+    if (hasEarlier && onNeedEarlier && start <= EDGE) onNeedEarlier();
+    if (hasLater && onNeedLater && end >= N - EDGE) onNeedLater();
+  }, [active, findScroller, listTop, N, hasEarlier, hasLater, onNeedEarlier, onNeedLater]);
+
+  // Anchor the viewport across a prepend: shift the render range by the K inserted
+  // rows and push scrollTop down by their (estimated) height, so the rows the user
+  // was looking at stay under their eyes instead of jumping up.
+  useLayoutEffect(() => {
+    const k = prependShift.current;
+    if (!k || !active) return;
+    prependShift.current = 0;
+    rebuildCum();
+    const addedAbove = cum.current[k] ?? 0;
+    setRange((r) => ({ start: r.start + k, end: r.end + k }));
+    const sc = findScroller();
+    if (sc) sc.scrollTop += addedAbove;
+  });
 
   // Recompute the window as the user scrolls (rAF-throttled).
   useEffect(() => {
@@ -234,32 +287,58 @@ function ConversationView(
     if (!active) return;
     const list = listRef.current;
     if (!list) return;
+    const sc = findScroller();
+    // Rows sitting ABOVE the viewport top, once measured, would otherwise shift
+    // everything below them (and the content under the user's eyes) — compensate
+    // scrollTop by their height delta. Matters for prepended load-earlier windows.
+    const viewTop = sc ? sc.scrollTop - listTop() : 0;
+    const c = cum.current;
+    let aboveDelta = 0;
     let changed = false;
     for (const el of Array.from(list.querySelectorAll<HTMLElement>("[data-vindex]"))) {
       const i = Number(el.dataset.vindex);
       const h = el.offsetHeight;
-      if (h && Math.abs((heights.current[i] || EST_HEIGHT) - h) > 1) {
+      const old = heights.current[i] || EST_HEIGHT;
+      if (h && Math.abs(old - h) > 1) {
+        if ((c[i] ?? 0) < viewTop) aboveDelta += h - old;
         heights.current[i] = h;
         changed = true;
       }
     }
     if (changed) {
       rebuildCum();
+      if (sc && aboveDelta) sc.scrollTop += aboveDelta;
       setTick((t) => t + 1); // re-render spacers; layout effect re-runs but converges
     }
   });
 
   // New thread (e.g. drilling into a subagent): reset the window to the top, the
-  // same as the non-virtualized viewer opened. Appends don't change items[0].
-  const threadKey = items[0]?.uuid ?? "";
+  // same as the non-virtualized viewer opened. NOT on append (items[0] unchanged)
+  // nor prepend (old first still present — the prepend effect anchors instead).
+  const prevResetFirst = useRef<string | null>(null);
   useEffect(() => {
     if (!active) return;
+    const first = items[0]?.uuid ?? null;
+    const prev = prevResetFirst.current;
+    prevResetFirst.current = first;
+    if (prev === first) return;
+    if (prev && items.some((it) => it.uuid === prev)) return; // prepend, keep position
+    if (landing === "bottom") {
+      // Live session opened on its tail window: show the latest activity.
+      setRange({ start: Math.max(0, N - 50), end: N });
+      requestAnimationFrame(() => {
+        const sc = findScroller();
+        if (sc) sc.scrollTop = sc.scrollHeight;
+        requestAnimationFrame(recalc);
+      });
+      return;
+    }
     setRange({ start: 0, end: Math.min(N, 60) });
     const sc = findScroller();
     if (sc) sc.scrollTop = 0;
     requestAnimationFrame(recalc);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadKey]);
+  }, [items]);
 
   const scrollToIndex = useCallback(
     (i: number, block: ScrollLogicalPosition = "center") => {
