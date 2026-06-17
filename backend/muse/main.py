@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db, lifecycle
 from .auth import AuthMiddleware
+from .compression import GzipBufferedMiddleware
 from .config import get_settings
 from .alerts import AlertsWatcher
 from .autopilot.controller import AutopilotController
@@ -107,6 +108,12 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="muse", version="0.1.0", lifespan=lifespan)
+
+    # gzip for ordinary responses (big thread JSON ~11MB -> ~2.3MB over a forward).
+    # Added FIRST => innermost: it compresses the final body, then auth/CORS wrap it.
+    # PURE ASGI and SSE-safe by construction (passes text/event-stream through; see
+    # ..compression) — do NOT swap in Starlette's GZipMiddleware, which buffers SSE.
+    app.add_middleware(GzipBufferedMiddleware)
 
     # Token auth for non-loopback clients (no-op when no token is configured).
     # PURE ASGI — never replace with BaseHTTPMiddleware/@app.middleware("http"):
