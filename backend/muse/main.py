@@ -173,6 +173,26 @@ def create_app() -> FastAPI:
             out[f"{names.get(tid, '?')}-{tid}"] = traceback.format_stack(frame)
         return out
 
+    @app.get("/api/debug/tasks", include_in_schema=False)
+    async def debug_tasks() -> dict:
+        """Every live asyncio task + its current stack — the thread-stack dump
+        can't see a spinning coroutine (the event loop thread just shows
+        `uvicorn.run`), so this is what pinpoints an event-loop spin."""
+        import asyncio
+
+        out = {}
+        for i, task in enumerate(asyncio.all_tasks()):
+            frames = task.get_stack()
+            out[f"{task.get_name()}-{i}"] = {
+                "coro": str(task.get_coro()),
+                "done": task.done(),
+                "stack": [
+                    f"{fr.f_code.co_filename.split('/muse/')[-1]}:{fr.f_lineno} {fr.f_code.co_name}"
+                    for fr in frames
+                ],
+            }
+        return out
+
     @app.get("/api/version")
     def version() -> dict:
         """Running code's version + git sha + uptime — compare git_sha to the

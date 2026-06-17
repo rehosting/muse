@@ -35,11 +35,13 @@ async def stream_board(request: Request):
     queue = await broker.subscribe("board")
 
     async def event_generator():
+        # See stream.py: polling request.is_disconnected() here steals the ASGI
+        # receive channel from sse_starlette's disconnect listener, so the stream
+        # is never cancelled on disconnect and `finally` never releases the board
+        # ticker / subscription — a leak that pegs the event loop over time.
         try:
             yield {"event": "snapshot", "data": snapshot.model_dump_json()}
             while True:
-                if await request.is_disconnected():
-                    break
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)
                 except asyncio.TimeoutError:
@@ -50,4 +52,4 @@ async def stream_board(request: Request):
             await broker.unsubscribe("board", queue)
             await board.release()
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), ping=HEARTBEAT_SECONDS)
