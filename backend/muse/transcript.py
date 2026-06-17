@@ -6,10 +6,13 @@ tool uses (second pass), derive a title, and attach subagent references.
 
 from __future__ import annotations
 
-import orjson
+import os
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+import orjson
+
+from .incremental import MAX_PARSE_BYTES
 from .models import (
     SubagentRef,
     Thread,
@@ -22,10 +25,24 @@ from .paths import SessionPaths, decode_cwd, find_session
 
 
 def iter_json_lines(path: Path) -> Iterator[dict[str, Any]]:
-    """Yield decoded JSON objects from a JSONL file, skipping bad/partial lines."""
+    """Yield decoded JSON objects from a JSONL file, skipping bad/partial lines.
+
+    Pathological multi-GB transcripts (e.g. gemini "merged" dumps) would block the
+    request thread for tens of seconds, so files above MAX_PARSE_BYTES are read
+    from their TAIL only — the most recent activity, which is what a viewer wants.
+    JSONL is line-delimited, so dropping the partial first line keeps objects whole.
+    """
     if not path.is_file():
         return
     with path.open("rb") as fh:  # bytes + orjson is the fast path
+        if MAX_PARSE_BYTES:
+            try:
+                size = os.fstat(fh.fileno()).st_size
+            except OSError:
+                size = 0
+            if size > MAX_PARSE_BYTES:
+                fh.seek(size - MAX_PARSE_BYTES)
+                fh.readline()  # discard the partial line we landed inside
         for line in fh:
             if not line.strip():
                 continue

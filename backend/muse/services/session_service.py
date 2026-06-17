@@ -7,6 +7,7 @@ publishes to the same broker — routers and streaming stay unchanged.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -357,7 +358,13 @@ class SessionService:
         return self.usage_history.roll(usage_cache.scan_all().events)
 
     # --- parse caches ---------------------------------------------------------
-    _PARSE_CACHE_SLOTS = 6
+    # Evict by total cached BYTES, not entry count: with only 6 slots the 100+
+    # sessions thrashed, so panels touching many sessions (open-loops parses ~12
+    # re-entry briefs, each reading events+thread) re-parsed everything on every
+    # poll. A byte budget keeps the many small sessions warm while the per-item
+    # cap below still keeps any single big one out of RAM. Tunable via env.
+    _PARSE_CACHE_SLOTS = int(os.environ.get("MUSE_PARSE_CACHE_SLOTS", "64"))
+    _PARSE_CACHE_BYTES = int(os.environ.get("MUSE_PARSE_CACHE_BYTES", str(256 * 1024 * 1024)))
     _CACHE_MAX_BYTES = 300 * 1024 * 1024  # never hold a multi-GB session in RAM
 
     def _change_key(self, session_id: str, agent_id: Optional[str]) -> Optional[tuple]:
@@ -399,8 +406,15 @@ class SessionService:
             with self._parse_lock:
                 cache[key] = (ck, value)
                 cache.move_to_end(key)
-                while len(cache) > self._PARSE_CACHE_SLOTS:
-                    cache.popitem(last=False)
+                # Evict oldest until within BOTH the byte budget and count cap
+                # (ck[1] is the source file size — a proxy for memory weight).
+                total = sum(v[0][1] for v in cache.values())
+                while len(cache) > 1 and (
+                    total > self._PARSE_CACHE_BYTES
+                    or len(cache) > self._PARSE_CACHE_SLOTS
+                ):
+                    _, (old_ck, _old) = cache.popitem(last=False)
+                    total -= old_ck[1]
         return value
 
     def get_thread(self, session_id: str) -> Optional[Thread]:
@@ -573,31 +587,33 @@ class SessionService:
         """Deterministic related-session scoring: same project (+2), edited-file
         Jaccard overlap (+0–5), same starting git branch (+2), temporal adjacency
         within 24h (+1). Shared files / branch are returned as the explanation."""
-        me = next((s for s in self.list_sessions() if s.session_id == session_id), None)
-        mine = self.file_index.edited_files(session_id)
-        sharing = {
-            d["session_id"]: d["shared_files"]
-            for d in self.file_index.sessions_sharing_files(session_id)
-        }
+        sessions = self.list_sessions()  # snapshot once (not per-iteration)
+        me = next((s for s in sessions if s.session_id == session_id), None)
+        if me is None:
+            return []
+        # ONE bulk query for every session's edited files, then score in memory.
+        # (The old per-session edited_files() loop took one lock-acquiring DB query
+        # per candidate — tens of them, each blocking behind the background ticks,
+        # which made this endpoint take 30-100s under contention.)
+        by_session = self.file_index.edited_files_by_session()
+        mine = by_session.get(session_id, set())
         scored = []
-        for s in self.list_sessions():
+        for s in sessions:
             if s.session_id == session_id:
                 continue
             score = 0.0
-            shared = sharing.get(s.session_id, [])
-            same_branch = bool(
-                me and me.git_branch and s.git_branch == me.git_branch
-            )
-            if me and s.project_cwd and s.project_cwd == me.project_cwd:
+            theirs = by_session.get(s.session_id, set())
+            shared = sorted(mine & theirs) if mine else []
+            same_branch = bool(me.git_branch and s.git_branch == me.git_branch)
+            if s.project_cwd and s.project_cwd == me.project_cwd:
                 score += 2
-            if shared and mine:
-                theirs = self.file_index.edited_files(s.session_id)
+            if shared:
                 union = len(mine | theirs)
                 if union:
-                    score += 5 * len(set(shared) & mine) / union
+                    score += 5 * len(shared) / union
             if same_branch:
                 score += 2  # started on the same branch (it may drift mid-session)
-            if me and abs(s.mtime.timestamp() - me.mtime.timestamp()) < 86400:
+            if abs(s.mtime.timestamp() - me.mtime.timestamp()) < 86400:
                 score += 1
             if score >= 2:  # same-project alone qualifies; mere adjacency doesn't
                 scored.append({
