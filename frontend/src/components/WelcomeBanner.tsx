@@ -1,4 +1,5 @@
 import { abbrevHome, contextLabel, modelDisplay } from "../util/format";
+import crab from "../assets/crab@4x.png";
 
 const PROVIDER_NAME: Record<string, string> = {
   claude: "Claude Code",
@@ -29,9 +30,15 @@ export default function WelcomeBanner({
     .filter(Boolean)
     .join(" ");
 
+  const isClaude = provider === "claude";
+
   return (
     <div className="cc-banner">
-      <span className="cc-banner-star">✻</span>
+      {isClaude ? (
+        <img className="cc-banner-crab" src={crab} alt="" aria-hidden />
+      ) : (
+        <span className="cc-banner-star">✻</span>
+      )}
       <div className="cc-banner-lines">
         <div className="cc-banner-l1">
           Welcome to {PROVIDER_NAME[provider] ?? provider}

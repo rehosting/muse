@@ -3,8 +3,10 @@ import CommandPalette from "./components/CommandPalette";
 import LaunchModal from "./components/LaunchModal";
 import LoginGate from "./components/LoginGate";
 import ThemeToggle from "./components/ThemeToggle";
+import { useKeyboardInset } from "./hooks/useKeyboardInset";
 
 export default function App() {
+  useKeyboardInset(); // publishes --kb-inset so mobile composers ride above the keyboard
   return (
     <div className="app">
       <nav className="navbar">
@@ -16,6 +18,9 @@ export default function App() {
         </NavLink>
         <NavLink to="/board" className="nav-link">
           Monitor
+        </NavLink>
+        <NavLink to="/panes" className="nav-link">
+          Panes
         </NavLink>
         <NavLink to="/autopilot" className="nav-link">
           Autopilot

@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import type { SessionLineage, Thread } from "../api/types";
 import { formatTokens, shortModel } from "../util/format";
 import { sessionStats } from "../util/stats";
@@ -11,6 +10,8 @@ import ContextMeter from "./ContextMeter";
 import ResumeButton from "./ResumeButton";
 import RelatedSessions from "./RelatedSessions";
 import SubagentTree, { type SubNode } from "./SubagentTree";
+import NotesPanel from "./NotesPanel";
+import HealthBar from "./HealthBar";
 
 export type LayoutMode = 1 | 2 | 3;
 
@@ -28,6 +29,8 @@ interface Props {
   onRename: (title: string) => void;
   lineage?: SessionLineage | null;
   onJumpToCompaction?: (uuid: string) => void;
+  /** Scroll the conversation to a step (used by the Notes & health dropdown). */
+  onFocus?: (uuid: string) => void;
 }
 
 function fmtTokens(n: number): string {
@@ -54,11 +57,13 @@ export default function ViewerHeader({
   onRename,
   lineage,
   onJumpToCompaction,
+  onFocus,
 }: Props) {
   const stats = useMemo(() => sessionStats(current), [current]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [treeOpen, setTreeOpen] = useState(false);
+  const [metaOpen, setMetaOpen] = useState(false);
   const inSubagent = activePath.length > 0;
   return (
     <header className="viewer-header">
@@ -149,9 +154,40 @@ export default function ViewerHeader({
               </button>
             )}
 
-            <Link to="/" className="all-sessions-link">
-              ← all sessions
-            </Link>
+            {!inSubagent && (
+              <div className="subagent-menu notes-menu">
+                <button
+                  className={`stat notes-menu-btn${metaOpen ? " active" : ""}`}
+                  title="Notes & health for this session"
+                  onClick={() => setMetaOpen((o) => !o)}
+                >
+                  ⚕ Notes &amp; health {metaOpen ? "▾" : "▸"}
+                </button>
+                {metaOpen && (
+                  <>
+                    <div className="menu-overlay" onClick={() => setMetaOpen(false)} />
+                    <div className="subagent-pop notes-pop">
+                      <HealthBar
+                        sessionId={current.session_id}
+                        onFocus={(u) => {
+                          onFocus?.(u);
+                          setMetaOpen(false);
+                        }}
+                        embedded
+                      />
+                      <NotesPanel
+                        sessionId={current.session_id}
+                        onFocus={(u) => {
+                          onFocus?.(u);
+                          setMetaOpen(false);
+                        }}
+                        embedded
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

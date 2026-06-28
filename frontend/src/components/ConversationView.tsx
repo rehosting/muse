@@ -10,12 +10,16 @@ import {
 } from "react";
 import type { ThreadItem, ToolUse } from "../api/types";
 import { summarize } from "./renderers";
+import { classifyUser, toolArg, toolBody, toolTitle } from "./ccInline";
 import { toolStatus } from "../util/toolIndex";
 import Markdown from "./Markdown";
 import BookmarkControl from "./BookmarkControl";
 import WelcomeBanner from "./WelcomeBanner";
 
 export type SelectSource = "conversation" | "log" | "detail";
+
+/** Kinds of conversation entry that map to a timeline event (non-tool). */
+export type MessageKind = "assistant_text" | "thinking" | "user" | "system";
 
 /** Imperative scroll API the viewer drives (deep links, timeline, search, live
  * append). With virtualization the target item may not be mounted yet, so these
@@ -24,6 +28,7 @@ export interface ConversationHandle {
   scrollToUuid: (uuid: string, block?: ScrollLogicalPosition) => void;
   scrollToTool: (toolId: string, block?: ScrollLogicalPosition) => void;
   scrollToBottom: () => void;
+  scrollToTop: () => void;
 }
 
 interface Props {
@@ -35,6 +40,9 @@ interface Props {
   provider?: string;
   selectedToolId: string | null;
   onSelectTool: (id: string, source: SelectSource) => void;
+  /** Click any non-tool line (assistant text, thinking, user, system) to open the
+   * matching timeline entry in the Detail pane. Resolved by (uuid, kind). */
+  onSelectMessage?: (uuid: string, kind: MessageKind) => void;
   registerToolRef: (id: string, el: HTMLElement | null) => void;
   /** Register each message wrapper by uuid so the timeline can scroll to it. */
   registerItemRef?: (uuid: string, el: HTMLElement | null) => void;
@@ -43,6 +51,9 @@ interface Props {
   onRemoveBookmark: (messageUuid: string) => void;
   /** Compact mode (follow panes): no search bar, banner, or bookmark controls. */
   compact?: boolean;
+  /** Focus mode (phone cockpit): collapse thinking + tool output to one line each
+   * so the actual conversation stays readable. Tap to expand any of them. */
+  focus?: boolean;
   /** Persistently highlight the message with this uuid (e.g. the step an
    * investigation reference points at). */
   highlightUuid?: string | null;
@@ -115,12 +126,14 @@ function ConversationView(
     provider = "claude",
     selectedToolId,
     onSelectTool,
+    onSelectMessage,
     registerToolRef,
     registerItemRef,
     bookmarks,
     onSaveBookmark,
     onRemoveBookmark,
     compact = false,
+    focus = false,
     highlightUuid = null,
     virtualize = false,
     scrollParentRef,
@@ -376,6 +389,18 @@ function ConversationView(
           });
         });
       },
+      scrollToTop: () => {
+        if (active) setRange({ start: 0, end: Math.min(N, 50) });
+        requestAnimationFrame(() => {
+          const sc = findScroller();
+          if (sc) sc.scrollTop = 0;
+          requestAnimationFrame(() => {
+            const s = findScroller();
+            if (s) s.scrollTop = 0;
+            recalc();
+          });
+        });
+      },
     }),
     [indexByUuid, indexByTool, scrollToIndex, active, N, findScroller, recalc],
   );
@@ -429,7 +454,9 @@ function ConversationView(
         item={item}
         selectedToolId={selectedToolId}
         onSelectTool={onSelectTool}
+        onSelectMessage={onSelectMessage}
         registerToolRef={registerToolRef}
+        focus={focus}
       />
     </div>
   );
@@ -507,24 +534,58 @@ interface ItemProps {
   item: ThreadItem;
   selectedToolId: string | null;
   onSelectTool: (id: string, source: SelectSource) => void;
+  onSelectMessage?: (uuid: string, kind: MessageKind) => void;
   registerToolRef: (id: string, el: HTMLElement | null) => void;
+  focus?: boolean;
+}
+
+/** Fire `cb` only for a genuine click — not while the user is selecting text and
+ * not when they clicked a link inside the rendered markdown. */
+function clickToSelect(cb: () => void) {
+  return (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("a")) return;
+    const sel = window.getSelection();
+    if (sel && sel.toString().length > 0) return;
+    cb();
+  };
 }
 
 function ConversationItem({
   item,
   selectedToolId,
   onSelectTool,
+  onSelectMessage,
   registerToolRef,
+  focus = false,
 }: ItemProps) {
   // User lines that only carried tool_results render nothing here — those
   // results are shown under their tool call, exactly like the CLI.
   if (item.role === "user") {
     if (!item.text) return null;
+    const u = classifyUser(item.text);
+    if (u.kind === "hidden") return null;
+    if (u.kind === "command") {
+      // Slash command, the way the CLI echoes it back: `> /cmd args`.
+      return (
+        <div className="cc-user cc-cmd">
+          <span className="cc-prompt">{">"}</span>
+          <span className="cc-cmd-name">{u.name}</span>
+          {u.args && <span className="cc-cmd-args"> {u.args}</span>}
+        </div>
+      );
+    }
+    if (u.kind === "stdout") {
+      // Local command output — dim, under the command, like the terminal.
+      return <div className="cc-cmd-out">{u.text}</div>;
+    }
     return (
-      <div className="cc-user">
+      <div
+        className={`cc-user${onSelectMessage ? " cc-clickable" : ""}`}
+        onClick={onSelectMessage && clickToSelect(() => onSelectMessage(item.uuid, "user"))}
+      >
         <span className="cc-prompt">{">"}</span>
         <div className="cc-md md-tight">
-          <Markdown>{item.text}</Markdown>
+          <Markdown>{u.text}</Markdown>
         </div>
       </div>
     );
@@ -532,7 +593,16 @@ function ConversationItem({
 
   if (item.role === "system") {
     if (!item.text) return null;
-    return <div className="cc-system">{item.text}</div>;
+    // Color by the line's level the way the CLI does (error red, etc.).
+    const lvl = item.level ?? "info";
+    return (
+      <div
+        className={`cc-system cc-system-${lvl}${onSelectMessage ? " cc-clickable" : ""}`}
+        onClick={onSelectMessage && clickToSelect(() => onSelectMessage(item.uuid, "system"))}
+      >
+        {item.text}
+      </div>
+    );
   }
 
   // assistant
@@ -541,7 +611,14 @@ function ConversationItem({
       {item.blocks.map((b, i) => {
         if (b.kind === "text" && b.text) {
           return (
-            <div className="cc-line cc-text-line" key={i}>
+            <div
+              className={`cc-line cc-text-line${onSelectMessage ? " cc-clickable" : ""}`}
+              key={i}
+              onClick={
+                onSelectMessage &&
+                clickToSelect(() => onSelectMessage(item.uuid, "assistant_text"))
+              }
+            >
               <span className="cc-bullet">⏺</span>
               <div className="cc-md">
                 <Markdown>{b.text}</Markdown>
@@ -550,7 +627,14 @@ function ConversationItem({
           );
         }
         if (b.kind === "thinking" && b.text) {
-          return <Thinking key={i} text={b.text} />;
+          return (
+            <Thinking
+              key={i}
+              text={b.text}
+              defaultOpen={!focus}
+              onSelect={onSelectMessage && (() => onSelectMessage(item.uuid, "thinking"))}
+            />
+          );
         }
         if (b.kind === "tool_use" && b.tool_use) {
           return (
@@ -560,6 +644,7 @@ function ConversationItem({
               selected={selectedToolId === b.tool_use.id}
               onSelect={() => onSelectTool(b.tool_use!.id, "conversation")}
               registerRef={registerToolRef}
+              focus={focus}
             />
           );
         }
@@ -574,75 +659,113 @@ function ToolLine({
   selected,
   onSelect,
   registerRef,
+  focus = false,
 }: {
   tool: ToolUse;
   selected: boolean;
   onSelect: () => void;
   registerRef: (id: string, el: HTMLElement | null) => void;
+  focus?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const status = toolStatus(tool);
-  const arg = summarize(tool.name, tool.input);
-  const resultText = tool.result?.content ?? tool.result?.preview ?? "";
+  const arg = toolArg(tool);
 
   return (
     <div
       ref={(el) => registerRef(tool.id, el)}
       className={`cc-line cc-tool-line${selected ? " selected" : ""}`}
-      onClick={onSelect}
+      onClick={() => {
+        // Inline expand is the primary affordance; selection keeps the timeline
+        // and (if open) the side panel in sync.
+        setExpanded((e) => !e);
+        onSelect();
+      }}
     >
       <div>
         <span className={`cc-bullet status-${status}`}>⏺</span>
-        <span className="cc-tool-name">{tool.name}</span>
-        <span className="cc-tool-arg">({arg})</span>
+        <span className="cc-tool-name">{toolTitle(tool.name)}</span>
+        {arg && <span className="cc-tool-arg">({arg})</span>}
         {tool.subagent && <span className="subagent-pill">{tool.subagent.agent_type}</span>}
       </div>
-      <ResultConnector text={resultText} truncated={tool.result?.truncated} pending={!tool.result} />
+      <ResultConnector tool={tool} expanded={expanded} focus={focus} />
     </div>
   );
 }
 
 function ResultConnector({
-  text,
-  truncated,
-  pending,
+  tool,
+  expanded,
+  focus = false,
 }: {
-  text: string;
-  truncated?: boolean;
-  pending?: boolean;
+  tool: ToolUse;
+  expanded: boolean;
+  focus?: boolean;
 }) {
-  if (pending) {
+  if (!tool.result) {
     return (
       <div className="cc-result">
-        <span className="cc-connector">⎿</span> <span className="cc-dim">running…</span>
+        <span className="cc-connector">⎿</span>
+        <div className="cc-result-body">
+          <span className="cc-dim">running…</span>
+        </div>
       </div>
     );
   }
-  const lines = text.split("\n");
-  const shown = lines.slice(0, 4);
-  const extra = lines.length - shown.length;
+  const { rows, limit } = toolBody(tool);
+  // Focus mode (phone): collapse the whole result to a single tap-to-expand line
+  // unless the user opened it — keeps the conversation readable on a small screen.
+  const effectiveLimit = focus && !expanded ? 0 : limit;
+  const shown = expanded ? rows : rows.slice(0, effectiveLimit);
+  const hidden = rows.length - shown.length;
   return (
     <div className="cc-result">
-      <span className="cc-connector">⎿</span>{" "}
-      <span className="cc-result-text">
-        {shown.join("\n") || "(No content)"}
-        {extra > 0 && <span className="cc-dim">{`\n… +${extra} lines (click to expand)`}</span>}
-        {truncated && <span className="cc-dim">{`\n… (output truncated — click to expand)`}</span>}
-      </span>
+      <span className="cc-connector">⎿</span>
+      <div className="cc-result-body">
+        {shown.map((r, i) => (
+          <div key={i} className={r.cls ?? "cc-result-line"}>
+            {r.text || " "}
+          </div>
+        ))}
+        {hidden > 0 && (
+          <div className="cc-dim">{`… +${hidden} line${hidden === 1 ? "" : "s"} (click to expand)`}</div>
+        )}
+        {tool.result.truncated && expanded && (
+          <div className="cc-dim">… (output truncated — open in side panel for full content)</div>
+        )}
+      </div>
     </div>
   );
 }
 
-function Thinking({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
+function Thinking({
+  text,
+  onSelect,
+  defaultOpen = true,
+}: {
+  text: string;
+  onSelect?: () => void;
+  defaultOpen?: boolean;
+}) {
+  // CC shows reasoning expanded in dim italic by default; collapsible to tidy up.
+  // The phone cockpit starts it collapsed (defaultOpen=false) to cut clutter.
+  const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="cc-thinking">
       <span className="thinking-star" onClick={() => setOpen(!open)}>
         ✻
       </span>
       <span className="cc-thinking-label" onClick={() => setOpen(!open)}>
-        {open ? "Thinking…" : "Thinking… (click to expand)"}
+        Thinking…
       </span>
-      {open && <div className="cc-thinking-body">{text}</div>}
+      {open && (
+        <div
+          className={`cc-thinking-body${onSelect ? " cc-clickable" : ""}`}
+          onClick={onSelect && clickToSelect(onSelect)}
+        >
+          {text}
+        </div>
+      )}
     </div>
   );
 }

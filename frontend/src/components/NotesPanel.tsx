@@ -11,12 +11,15 @@ const KIND_ICON: Record<string, string> = { note: "📝", next: "⏭", brief: "�
 export default function NotesPanel({
   sessionId,
   onFocus,
+  embedded = false,
 }: {
   sessionId: string;
   onFocus: (uuid: string) => void;
+  /** Rendered inside a dropdown: start expanded (the user already opened it). */
+  embedded?: boolean;
 }) {
   const [notes, setNotes] = useState<Note[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
   const [draft, setDraft] = useState("");
 
   useEffect(() => {

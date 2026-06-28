@@ -8,12 +8,15 @@ import type { SessionHealth } from "../api/types";
 export default function HealthBar({
   sessionId,
   onFocus,
+  embedded = false,
 }: {
   sessionId: string;
   onFocus: (uuid: string) => void;
+  /** Rendered inside a dropdown: start expanded (the user already opened it). */
+  embedded?: boolean;
 }) {
   const [health, setHealth] = useState<SessionHealth | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
 
   useEffect(() => {
     let ok = true;

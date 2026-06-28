@@ -16,6 +16,7 @@ import type { Crumb } from "../components/Breadcrumb";
 import ConversationView, {
   type ConversationHandle,
   type SelectSource,
+  type MessageKind,
 } from "../components/ConversationView";
 import EventTimeline from "../components/EventTimeline";
 import EventDetail from "../components/EventDetail";
@@ -24,9 +25,7 @@ import ToolDetail from "../components/ToolDetail";
 import ToolDetailPanel from "../components/ToolDetailPanel";
 import ViewerHeader, { type LayoutMode } from "../components/ViewerHeader";
 import SessionBacklinks from "../components/SessionBacklinks";
-import NotesPanel from "../components/NotesPanel";
 import ReentryBanner from "../components/ReentryBanner";
-import HealthBar from "../components/HealthBar";
 import { type SubNode } from "../components/SubagentTree";
 import ResizableSplit from "../components/ResizableSplit";
 import { useSessionStream } from "../hooks/useSessionStream";
@@ -342,6 +341,23 @@ export default function SessionViewPage() {
     [layout],
   );
 
+  // Conversation → Detail pane for non-tool lines: clicking assistant text,
+  // thinking, a user message, or a system line opens the matching timeline event.
+  // One message uuid can spawn several events, so prefer the one whose kind
+  // matches the clicked line, then fall back to any event for that uuid.
+  const selectMessage = useCallback(
+    (uuid: string, kind: MessageKind) => {
+      const ev =
+        events.find((e) => e.anchor_uuid === uuid && e.kind === kind) ??
+        events.find((e) => e.anchor_uuid === uuid);
+      if (!ev) return;
+      setSelectedToolId(null);
+      setSelectedEvent(ev);
+      if (layout === 1) setOverlayOpen(true);
+    },
+    [events, layout],
+  );
+
   // Scroll the conversation to a message (or its tool) from an external panel
   // (backlinks, notes, health, re-entry, timeline). A tool uuid routes through
   // selection so the detail pane opens too.
@@ -376,7 +392,11 @@ export default function SessionViewPage() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
-      if (e.key === "Escape") return setShowHelp(false);
+      if (e.key === "Escape") {
+        setShowHelp(false);
+        setOverlayOpen(false);
+        return;
+      }
       if (typing) return;
       if (e.key === "/") {
         e.preventDefault();
@@ -538,6 +558,20 @@ export default function SessionViewPage() {
     }
     convViewRef.current?.scrollToBottom();
   };
+  const jumpToTop = async () => {
+    // If we're showing later history, the head isn't loaded — fetch it first.
+    if (sessionId && agentStack.length === 0 && main && hasEarlier(main)) {
+      try {
+        const t = await api.getThread(sessionId, { limit: WINDOW, anchor: "head" });
+        setMain(t);
+        requestAnimationFrame(() => convViewRef.current?.scrollToTop());
+        return;
+      } catch {
+        /* fall through to a plain scroll */
+      }
+    }
+    convViewRef.current?.scrollToTop();
+  };
   const conversation = (
     <div className="panel panel-conversation">
       <div className="panel-label">Conversation</div>
@@ -554,6 +588,7 @@ export default function SessionViewPage() {
           provider={current.provider}
           selectedToolId={selectedToolId}
           onSelectTool={selectTool}
+          onSelectMessage={selectMessage}
           registerToolRef={registerConvRef}
           registerItemRef={registerConvItemRef}
           bookmarks={bookmarks}
@@ -570,6 +605,9 @@ export default function SessionViewPage() {
           }
         />
       </div>
+      <button className="jump-top" title="Jump to top" onClick={jumpToTop}>
+        ↑
+      </button>
       <button className="jump-bottom" title="Jump to latest" onClick={jumpToBottom}>
         ↓
       </button>
@@ -669,13 +707,12 @@ export default function SessionViewPage() {
         onRename={renameSession}
         lineage={lineage}
         onJumpToCompaction={(uuid) => focusInConversation(uuid)}
+        onFocus={focusInConversation}
       />
 
       {sessionId && agentStack.length === 0 && (
         <>
           <SessionBacklinks sessionId={sessionId} onFocus={focusInConversation} />
-          <NotesPanel sessionId={sessionId} onFocus={focusInConversation} />
-          <HealthBar sessionId={sessionId} onFocus={focusInConversation} />
           <ReentryBanner
             sessionId={sessionId}
             provider={current.provider}
@@ -716,7 +753,10 @@ export default function SessionViewPage() {
 
       {layout === 1 && overlayOpen && !selectedTool && selectedEvent && (
         <>
-          <div className="detail-overlay" onClick={() => setOverlayOpen(false)} />
+          <div
+            className="detail-overlay detail-overlay-passthrough"
+            onClick={() => setOverlayOpen(false)}
+          />
           <aside className="detail-panel">
             <div className="detail-head">
               <span className="tool-name">{selectedEvent.label || selectedEvent.kind}</span>

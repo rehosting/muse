@@ -168,6 +168,7 @@ button {
 
 .app {
   height: 100vh;
+  height: 100dvh; /* dynamic viewport: don't hide the bottom behind mobile browser chrome */
   display: flex;
   flex-direction: column;
 }
@@ -841,6 +842,12 @@ button {
   background: rgba(0, 0, 0, 0.5);
   z-index: 40;
 }
+/* The single-pane Detail slide-over is non-modal: its backdrop must not capture
+ * wheel/click events, so the rest of the page stays scrollable behind it. */
+.detail-overlay.detail-overlay-passthrough {
+  background: transparent;
+  pointer-events: none;
+}
 .detail-panel {
   position: fixed;
   top: 0;
@@ -1014,8 +1021,31 @@ button.load-more {
   font-size: 12px;
   color: var(--text-dim);
 }
-.all-sessions-link {
+/* Notes & health dropdown trigger in the viewer meta row (chip-styled button). */
+.notes-menu-btn {
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+  background: var(--bg-elev2);
+  cursor: pointer;
+  font: inherit;
   font-size: 12px;
+  white-space: nowrap;
+}
+.notes-menu-btn:hover,
+.notes-menu-btn.active {
+  color: var(--text);
+  border-color: var(--accent-dim);
+}
+/* The embedded Health/Notes bars drop their full-width bar chrome inside the pop. */
+.notes-pop .notes-bar {
+  background: none;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.notes-pop > .notes-bar:last-child {
+  border-bottom: none;
 }
 
 .layout-switch {
@@ -1112,9 +1142,9 @@ body.resizing {
   height: 100%;
   position: relative;
 }
-.jump-bottom {
+.jump-bottom,
+.jump-top {
   position: absolute;
-  bottom: 16px;
   right: 18px;
   width: 34px;
   height: 34px;
@@ -1130,7 +1160,14 @@ body.resizing {
   align-items: center;
   justify-content: center;
 }
-.jump-bottom:hover {
+.jump-bottom {
+  bottom: 16px;
+}
+.jump-top {
+  top: 38px;
+}
+.jump-bottom:hover,
+.jump-top:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -1495,6 +1532,15 @@ body.resizing {
   background: var(--bg-elev2);
   box-shadow: inset 2px 0 0 var(--accent);
 }
+/* Any non-tool line that jumps to its Detail-pane entry on click. */
+.cc-clickable {
+  cursor: pointer;
+  border-radius: 4px;
+}
+.cc-clickable:hover {
+  background: var(--bg-elev);
+  box-shadow: inset 2px 0 0 var(--border);
+}
 .cc-tool-name {
   color: var(--text);
   font-weight: 700;
@@ -1506,6 +1552,7 @@ body.resizing {
   margin: 2px 0 2px 14px;
   display: flex;
   gap: 8px;
+  align-items: flex-start;
 }
 .cc-connector {
   color: var(--text-dim);
@@ -1521,6 +1568,74 @@ body.resizing {
 .cc-dim {
   color: var(--text-dim);
   opacity: 0.75;
+}
+/* Inline tool body: every line under the ⎿ connector, indented as a block the
+   way the CLI prints multi-line tool output. */
+.cc-result-body {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+}
+.cc-result-line {
+  color: var(--text-dim);
+}
+/* CC-style plain unified diff for Edit/Write — green additions, red removals,
+   dim context, monospace, no gutter chrome. */
+.cc-diff-add {
+  color: var(--running);
+  background: color-mix(in srgb, var(--running) 12%, transparent);
+}
+.cc-diff-del {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+.cc-diff-ctx {
+  color: var(--text-dim);
+}
+.cc-row-err {
+  color: var(--error);
+}
+/* Inline todo checklist (TodoWrite → "Update Todos"). */
+.cc-todo {
+  color: var(--text-dim);
+}
+.cc-todo-completed {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+.cc-todo-in_progress {
+  color: var(--text);
+  font-weight: 600;
+}
+/* Slash command echo: `> /cmd args`. */
+.cc-cmd {
+  color: var(--accent);
+}
+.cc-cmd-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.cc-cmd-args {
+  color: var(--text-dim);
+}
+.cc-cmd-out {
+  margin: 2px 0 10px 14px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* System notices, colored by level like the CLI. */
+.cc-system-error {
+  color: var(--error);
+}
+.cc-system-warning {
+  color: var(--tool);
+}
+.cc-system-notice,
+.cc-system-suggestion {
+  color: var(--accent);
 }
 .cc-thinking {
   margin: 7px 0;
@@ -5045,3 +5160,479 @@ body.resizing {
 .tl-c-medium { fill: none; stroke: var(--running); stroke-width: 1.5; }
 .tl-c-low, .tl-c-none { fill: var(--text-dim); }
 .tl-legend { font-size: 11px; margin-top: 6px; }
+
+/* ---- Mobile cockpit (/drive/:id): read + tap-to-select + reply ---- */
+/* Hide the global nav only on the immersive single-target views (a picked pane /
+   the drive cockpit). The task list keeps the nav so you can reach other sections. */
+body:has(.drive-page) .navbar,
+body:has(.panes-detail) .navbar { display: none; }
+
+.drive-page {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.drive-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  padding-top: max(10px, env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+}
+.drive-back, .drive-full {
+  text-decoration: none;
+  color: var(--text-dim);
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.drive-title {
+  flex: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.drive-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.drive-foot {
+  border-top: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+  padding: 8px 10px;
+  padding-bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--kb-inset, 0px));
+  transition: padding-bottom 0.16s ease-out;
+}
+
+/* Option picker — big tappable chips, used for all three option sources. */
+.option-picker { margin-bottom: 8px; }
+.option-picker-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+.option-badge {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--running, #3b82f6);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.option-prompt { font-weight: 600; }
+.option-more { font-size: 12px; color: var(--text-dim); }
+.option-chips { display: flex; flex-direction: column; gap: 8px; }
+.option-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  font-size: 16px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.option-chip:active { background: var(--border); }
+.option-chip:disabled { opacity: 0.5; }
+.option-chip-label { font-weight: 600; }
+.option-chip-desc { font-size: 13px; color: var(--text-dim); font-weight: 400; }
+.option-chip-other { color: var(--text-dim); font-style: italic; }
+.option-freetext { display: flex; gap: 8px; align-items: stretch; }
+.option-freetext-input {
+  flex: 1;
+  min-height: 44px;
+  font-size: 16px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+.option-chip-send { min-height: 44px; width: auto; padding: 0 18px; }
+
+/* Cockpit reply composer — multiline textarea with big tap targets. */
+.reply-box-cockpit { display: flex; gap: 8px; align-items: flex-end; }
+.reply-box-cockpit .reply-input {
+  flex: 1;
+  font-size: 16px; /* 16px prevents iOS zoom-on-focus */
+  min-height: 44px;
+  max-height: 120px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  resize: none;
+}
+.reply-box-cockpit .action-btn { min-height: 44px; }
+.drive-composer-row { display: flex; gap: 8px; align-items: flex-end; }
+.drive-composer-row .reply-box-cockpit { flex: 1; }
+.drive-suggestions { margin-bottom: 8px; }
+
+/* Web Push card on the Alerts page */
+.alerts-card-title { font-size: 15px; font-weight: 600; margin: 0 0 6px; }
+.alerts-saved { color: var(--text-dim); font-size: 13px; align-self: center; }
+.alerts-devices { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13px; }
+.alerts-devices li { padding: 4px 0; border-top: 1px solid var(--border); }
+
+/* Cockpit status banner — always says what the session needs from you. */
+.drive-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 4px 8px;
+  color: var(--text-dim);
+}
+.drive-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-dim);
+}
+.drive-status-wait { color: var(--running, #f59e0b); }
+.drive-status-wait .drive-status-dot { background: var(--running, #f59e0b); animation: drive-pulse 1.6s ease-in-out infinite; }
+.drive-status-busy .drive-status-dot { background: #22c55e; animation: drive-pulse 1.6s ease-in-out infinite; }
+.drive-status-idle .drive-status-dot { background: var(--text-dim); }
+@keyframes drive-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.drive-suggest-btn { min-height: 44px; align-self: flex-end; }
+
+/* Focus mode: tighter spacing so more of the transcript is visible on a phone. */
+.cc-compact .cc-thinking,
+.cc-compact .cc-tool-line { margin: 2px 0; }
+.cc-compact .cc-item { margin-bottom: 6px; }
+
+/* ---- Mobile tmux panes view (/panes): swipeable deck ---- */
+.panes-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding-bottom: var(--kb-inset, 0px); /* lift the deck above the on-screen keyboard */
+  transition: padding-bottom 0.16s ease-out;
+}
+.panes-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  -webkit-overflow-scrolling: touch;
+  border-bottom: 1px solid var(--border);
+}
+.panes-tab {
+  flex: none;
+  font-size: 12px;
+  font-family: var(--mono, monospace);
+  padding: 6px 10px;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.panes-tab {
+  -webkit-tap-highlight-color: transparent; /* no lingering tap shade on touched tabs */
+  appearance: none;
+}
+.panes-tab:focus { outline: none; }
+.panes-tab.active {
+  color: var(--text);
+  border-color: var(--running, #3b82f6);
+  background: var(--bg-elev2, var(--border)); /* deliberate highlight for the current tab */
+}
+.panes-tab-badge { color: var(--running, #f59e0b); margin-left: 5px; font-size: 9px; }
+
+.panes-deck {
+  flex: 1;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+.pane-card {
+  flex: 0 0 100%;
+  scroll-snap-align: center;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  padding: 10px 12px 0;
+  gap: 8px;
+}
+.pane-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.pane-card-loc { font-family: var(--mono, monospace); font-weight: 700; }
+.pane-card-cmd {
+  background: var(--running, #3b82f6); color: #fff;
+  border-radius: 4px; padding: 1px 6px; font-size: 11px;
+}
+.pane-card-win, .pane-card-cwd { color: var(--text-dim); }
+.pane-card-drive { margin-left: auto; text-decoration: none; color: var(--running, #3b82f6); font-weight: 600; }
+.pane-card-screen {
+  flex: 1;
+  min-height: 0; /* let the terminal shrink so the keypad + compose stay on screen */
+  overflow-x: hidden;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px;
+  background: #0b0d11;
+  color: #d6deeb;
+  border-radius: 8px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  line-height: 1.4;
+  /* Terminal-grid wrap: fill to the screen edge and wrap at the character boundary
+     (like a narrower terminal), instead of word-wrapping into ragged short lines.
+     pre-wrap keeps the program's own line breaks + internal spacing. */
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain; /* vertical scroll-up stays in the terminal, not the swipe deck */
+}
+.pane-card-options { display: flex; flex-direction: column; gap: 6px; }
+.pane-card-keys { display: flex; gap: 8px; }
+.pane-card-keys .action-btn { flex: 1; min-height: 44px; font-size: 18px; }
+.pane-card-compose { display: flex; gap: 8px; align-items: flex-end; }
+.pane-card-compose .reply-input {
+  flex: 1; font-size: 16px; min-height: 44px; max-height: 100px;
+  padding: 10px 12px; border-radius: 10px; resize: none;
+}
+.pane-card-compose .action-btn { min-height: 44px; }
+.panes-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+  flex: none;
+}
+.panes-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border); }
+.panes-dot.active { background: var(--running, #3b82f6); }
+
+/* ---- Mobile task list (/panes): named windows grouped by attention ---- */
+.tasks-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 10px;
+  padding-bottom: calc(16px + var(--kb-inset, 0px));
+}
+.tasks-section { margin-bottom: 14px; }
+.tasks-heading {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 6px 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+}
+.tasks-needs_you { color: var(--running, #f59e0b); }
+.tasks-working { color: #22c55e; }
+.tasks-count {
+  font-size: 11px;
+  background: var(--bg-elev2, var(--border));
+  color: var(--text-dim);
+  border-radius: 10px;
+  padding: 0 7px;
+  font-weight: 600;
+}
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  text-align: left;
+  color: var(--text);
+}
+.task-row:active { background: var(--bg-elev, var(--border)); }
+.task-row.muted { opacity: 0.6; }
+.task-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--text-dim); }
+.task-needs_you { background: var(--running, #f59e0b); animation: drive-pulse 1.6s ease-in-out infinite; }
+.task-working { background: #22c55e; animation: drive-pulse 1.6s ease-in-out infinite; }
+.task-idle { background: var(--text-dim); }
+.task-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.task-name { font-weight: 600; font-size: 15px; }
+.task-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono, monospace);
+}
+.task-meta { display: flex; align-items: center; gap: 6px; flex: none; }
+.task-cmd {
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  background: var(--bg-elev2, var(--border));
+  color: var(--text-dim);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.task-panes { font-size: 11px; color: var(--text-dim); }
+.task-icon { font-size: 15px; }
+.tasks-noise-toggle {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 4px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Drill-in detail reuses the pane card, full height. */
+.pane-detail { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.pane-detail .pane-card { flex: 1 1 auto; height: auto; min-height: 0; }
+.pane-detail-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Swipeable detail deck (tab strip + horizontally swiped pane cards). */
+.panes-detail {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding-bottom: var(--kb-inset, 0px);
+  transition: padding-bottom 0.16s ease-out;
+}
+.panes-detail .panes-deck { flex: 1; min-height: 0; }
+
+/* Panes detail header: back + status dot + current window + attention (no tab menu) */
+.panes-detail-head .task-dot { margin: 0 2px; }
+.panes-detail-attn {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+
+/* Detail tab bar: back button + scrollable full window menu. */
+.panes-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  padding-top: max(6px, env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+}
+.panes-tabbar .drive-back { flex: none; }
+.panes-tabbar .panes-tabs { border-bottom: none; padding: 0; flex: 1; }
+.panes-tab { display: inline-flex; align-items: center; gap: 6px; }
+.tab-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-dim); }
+
+/* Pane card head right group: context meter + drive button. */
+.pane-card-right { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.pane-card-right .pane-card-drive { margin-left: 0; }
+.pane-card-ctx { font-size: 11px; font-family: var(--mono, monospace); font-weight: 600; }
+.pane-card-ctx.ctx-low { color: var(--text-dim); }
+.pane-card-ctx.ctx-mid { color: var(--running, #f59e0b); }
+.pane-card-ctx.ctx-high { color: #ef596f; }
+
+/* Tap-to-cycle permission-mode chip (Shift+Tab) */
+.pane-card-mode {
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #2a2a32);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pane-card-mode:disabled { opacity: 0.5; }
+.pane-card-mode.mode-acceptEdits { color: var(--running, #5fd97a); border-color: var(--running, #5fd97a); }
+.pane-card-mode.mode-plan { color: #6ea8fe; border-color: #6ea8fe; }
+.pane-card-mode.mode-bypass { color: #ef596f; border-color: #ef596f; }
+
+/* Status colors: needs_you=amber, responded(your turn)=blue, working=green, idle=dim.
+   Carried by the small dots (task list + tab strip), not a card background. */
+.task-responded { background: #61afef; animation: drive-pulse 1.6s ease-in-out infinite; }
+.tasks-responded { color: #61afef; }
+/* Tab dots take their color from the status class (.task-*); base only sets size,
+   so the dot isn't forced back to dim. */
+.tab-dot.task-needs_you { background: var(--running, #f59e0b); }
+.tab-dot.task-responded { background: #61afef; }
+.tab-dot.task-working { background: #22c55e; }
+.tab-dot.task-idle { background: var(--text-dim); }
+
+/* "+ New session" button at the end of the task list. */
+.task-new {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 12px;
+  margin-top: 4px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 15px;
+  font-weight: 600;
+}
+.task-new:active { background: var(--bg-elev, var(--border)); }
+.task-new:disabled { opacity: 0.6; }
+.task-new-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--running, #5fd97a);
+  color: #08140c;
+  font-weight: 700;
+}
