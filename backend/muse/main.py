@@ -34,8 +34,10 @@ from .routers import (
     investigations,
     launch,
     notify,
+    options,
     sessions,
     stream,
+    tmux,
     worklog,
 )
 from .services.events import EventBroker
@@ -142,6 +144,8 @@ def create_app() -> FastAPI:
     app.include_router(board.router)
     app.include_router(insights.router)
     app.include_router(interact.router)
+    app.include_router(options.router)
+    app.include_router(tmux.router)
     app.include_router(auth.router)
 
     # MCP server (Streamable HTTP) on the same process → tool calls share state

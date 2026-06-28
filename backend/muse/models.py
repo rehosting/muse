@@ -570,6 +570,10 @@ class NotifyConfig(BaseModel):
     topic: str = ""
     priority: int = 3  # ntfy 1 (min) .. 5 (max)
     token: Optional[str] = None  # optional auth for protected/self-hosted topics
+    # Web Push (VAPID) is an additional, independent channel: a device subscribes
+    # once while connected, then the browser's push service delivers over the public
+    # internet even when the phone is off the tailnet. Outbound-only, like ntfy.
+    web_push_enabled: bool = False
 
 
 class NotifyResult(BaseModel):
@@ -594,6 +598,74 @@ class AlertEvent(BaseModel):
     message: str = ""
     delivered: bool = False
     detail: str = ""  # delivery detail (HTTP status / error)
+
+
+class PushSubscription(BaseModel):
+    """A browser Web Push subscription, stored per device so muse can deliver to it."""
+
+    endpoint: str
+    keys: dict[str, str] = Field(default_factory=dict)  # {p256dh, auth}
+    label: str = ""  # human-friendly device name
+    created_at: Optional[str] = None
+
+
+class PendingOption(BaseModel):
+    id: str  # "1".."9" for menus; option index for tool questions; "other" for free-text
+    label: str
+    description: Optional[str] = None
+    kind: Literal["menu", "free_text"] = "menu"
+
+
+class PendingOptions(BaseModel):
+    """What a live session is currently asking the user to choose between."""
+
+    session_id: str
+    source: Literal["permission", "tool_question", "none"] = "none"
+    available: bool = False  # False when nothing is pending / actionable
+    prompt: str = ""
+    options: list[PendingOption] = Field(default_factory=list)
+    current_index: Optional[int] = None  # highlighted row in the live buffer
+    fingerprint: str = ""  # client echoes this back on select for stale-protection
+    remaining_questions: int = 0  # AskUserQuestion with >1 question still pending
+    pane_id: Optional[str] = None
+    in_tmux: bool = True  # False => process found but not running inside tmux
+    reason: Optional[str] = None  # why nothing actionable (for UI messaging)
+
+
+class SuggestReply(BaseModel):
+    text: str
+
+
+class TmuxPane(BaseModel):
+    """One pane in the live tmux topology, for the swipeable mobile panes view."""
+
+    pane_id: str
+    session_name: str
+    window_index: int
+    window_name: str
+    window_active: bool
+    pane_index: int
+    pane_active: bool
+    command: str
+    cwd: str
+    title: str = ""
+    session_attached: bool = True  # False => detached session (scratch/background)
+    muse_session_id: Optional[str] = None  # set if this pane runs a tracked session
+    context_pct: Optional[float] = None  # context-window occupancy (tracked sessions)
+    # Attention status for grouping the mobile task list.
+    # responded = a live session whose turn ended (a response is ready for you).
+    status: Literal["needs_you", "responded", "working", "idle"] = "idle"
+    attention: str = ""  # short reason, e.g. "permission prompt", "working"
+    # Claude Code's permission mode (Shift+Tab cycles it); None for non-Claude panes.
+    mode: Optional[Literal["default", "acceptEdits", "plan", "bypass"]] = None
+    preview: str = ""  # recent captured lines (plain text)
+    options: list[PendingOption] = Field(default_factory=list)  # menu detected in buffer
+
+
+class TmuxLayout(BaseModel):
+    available: bool = True  # False when tmux isn't installed/running
+    panes: list[TmuxPane] = Field(default_factory=list)
+    reason: Optional[str] = None
 
 
 class Bookmark(BaseModel):

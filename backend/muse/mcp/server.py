@@ -19,6 +19,9 @@ from typing import Optional
 import anyio
 from mcp.server.fastmcp import FastMCP
 
+from .. import options as opt
+from ..autopilot import sessions as live_discovery
+from ..autopilot import tmux
 from ..config import get_settings
 
 # Set once at app startup; tools resolve the shared service through this.
@@ -162,6 +165,39 @@ def build_mcp() -> FastMCP:
         `next_offset` is set, call again with offset=next_offset for the rest."""
         res = await _to_thread(_svc().get_session_outline, session_id, offset)
         return res if res is not None else {"error": f"session not found: {session_id}"}
+
+    @mcp.tool()
+    async def get_pending_options(session_id: str) -> dict:
+        """Read-only: what a LIVE session is currently asking the user to choose
+        between — a terminal permission/selection dialog or a pending AskUserQuestion/
+        ExitPlanMode. Returns {source, prompt, options:[{id,label,description}],
+        current_index} or {available: false, reason}. Never writes to the session."""
+
+        def _resolve() -> dict:
+            ls = next(
+                (s for s in live_discovery.discover() if s.session_id == session_id), None
+            )
+            if ls is None:
+                return {"available": False, "reason": "session has no live process"}
+            if not ls.pane_id:
+                return {"available": False, "reason": "not running inside tmux"}
+            menu = opt.parse_permission_menu(tmux.capture_pane(ls.pane_id, 40))
+            if menu is None:
+                menu = opt.find_pending_tool_question(_svc().get_thread(session_id))
+            if menu is None:
+                return {"available": False, "reason": "nothing pending"}
+            return {
+                "available": True,
+                "source": menu.source,
+                "prompt": menu.prompt,
+                "options": [
+                    {"id": o.id, "label": o.label, "description": o.description}
+                    for o in menu.options
+                ],
+                "current_index": menu.current_index,
+            }
+
+        return await _to_thread(_resolve)
 
     @mcp.tool()
     async def get_step(session_id: str, anchor_uuid: str) -> dict:
