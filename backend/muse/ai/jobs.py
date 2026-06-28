@@ -28,6 +28,7 @@ KINDS = (
     "daily_digest",
     "weekly_retro",
     "draft_reply",
+    "suggest_replies",
     "diagnose",
     "triage",
 )
