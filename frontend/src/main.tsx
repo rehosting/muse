@@ -6,6 +6,8 @@ import SessionListPage from "./pages/SessionListPage";
 import SessionViewPage from "./pages/SessionViewPage";
 import StatsPage from "./pages/StatsPage";
 import BoardPage from "./pages/BoardPage";
+import DrivePage from "./pages/DrivePage";
+import PanesPage from "./pages/PanesPage";
 import FollowPage from "./pages/FollowPage";
 import AutopilotPage from "./pages/AutopilotPage";
 import AlertsPage from "./pages/AlertsPage";
@@ -18,8 +20,10 @@ import AskPage from "./pages/AskPage";
 import InsightsPage from "./pages/InsightsPage";
 import "./styles.css";
 import { initTheme } from "./components/ThemeToggle";
+import { registerSW } from "./registerSW";
 
 initTheme(); // set data-theme before first paint (no wrong-theme flash)
+registerSW(); // PWA app-shell cache + Web Push (production only)
 
 const router = createBrowserRouter([
   {
@@ -40,6 +44,8 @@ const router = createBrowserRouter([
       { path: "insights", element: <InsightsPage /> },
       { path: "ask", element: <AskPage /> },
       { path: "sessions/:sessionId", element: <SessionViewPage /> },
+      { path: "drive/:sessionId", element: <DrivePage /> },
+      { path: "panes", element: <PanesPage /> },
     ],
   },
 ]);

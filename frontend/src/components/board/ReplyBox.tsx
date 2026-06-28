@@ -8,10 +8,14 @@ export default function ReplyBox({
   sessionId,
   hasPane,
   busy,
+  variant = "board",
+  draft,
 }: {
   sessionId: string;
   hasPane: boolean;
   busy: boolean; // live_status === "busy": sending mid-turn queues the message
+  variant?: "board" | "cockpit"; // cockpit = phone-first multiline textarea
+  draft?: string; // when set, prefills the box (AI suggestion) — you edit and send
 }) {
   const [text, setText] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
@@ -19,6 +23,17 @@ export default function ReplyBox({
   const sentTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => () => window.clearTimeout(sentTimer.current), []);
+  // A parent-supplied draft is a DEFAULT, not an override: apply it only when the
+  // box is empty or still holds the previous default (i.e. the user hasn't typed
+  // their own text). This lets the suggestion refresh each turn without ever
+  // clobbering in-progress input. Send then sends whatever's in the box — so an
+  // untouched default sends as-is.
+  const lastDraft = useRef("");
+  useEffect(() => {
+    if (!draft) return;
+    setText((cur) => (cur === "" || cur === lastDraft.current ? draft : cur));
+    lastDraft.current = draft;
+  }, [draft]);
 
   const send = async () => {
     const t = text.trim();
@@ -46,24 +61,35 @@ export default function ReplyBox({
     }
   };
 
+  const placeholder = hasPane
+    ? busy
+      ? "queue a message for when this turn ends…"
+      : "reply to this session…"
+    : "no tmux pane matched — open it in your terminal";
+
   return (
-    <div className="reply-box">
-      <input
-        className="reply-input"
-        placeholder={
-          hasPane
-            ? busy
-              ? "queue a message for when this turn ends…"
-              : "reply to this session…"
-            : "no tmux pane matched — open it in your terminal"
-        }
-        value={text}
-        disabled={!hasPane}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") send();
-        }}
-      />
+    <div className={variant === "cockpit" ? "reply-box reply-box-cockpit" : "reply-box"}>
+      {variant === "cockpit" ? (
+        <textarea
+          className="reply-input"
+          placeholder={placeholder}
+          value={text}
+          disabled={!hasPane}
+          rows={1}
+          onChange={(e) => setText(e.target.value)}
+        />
+      ) : (
+        <input
+          className="reply-input"
+          placeholder={placeholder}
+          value={text}
+          disabled={!hasPane}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") send();
+          }}
+        />
+      )}
       <button
         className="action-btn"
         disabled={!hasPane || !text.trim() || state === "sending"}
@@ -79,15 +105,17 @@ export default function ReplyBox({
       >
         Esc
       </button>
-      <AiActionButton
-        label="✦"
-        title="AI-draft a reply (prefills the box — you edit and send)"
-        enqueue={() => api.draftReply(sessionId)}
-        onDone={(job) => {
-          const draft = (job.result as { draft?: string } | null)?.draft;
-          if (draft) setText(draft);
-        }}
-      />
+      {variant !== "cockpit" && (
+        <AiActionButton
+          label="✦"
+          title="AI-draft a reply (prefills the box — you edit and send)"
+          enqueue={() => api.draftReply(sessionId)}
+          onDone={(job) => {
+            const draft = (job.result as { draft?: string } | null)?.draft;
+            if (draft) setText(draft);
+          }}
+        />
+      )}
       {state === "error" && error && <div className="reply-error">⚠ {error}</div>}
     </div>
   );

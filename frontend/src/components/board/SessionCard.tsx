@@ -124,6 +124,13 @@ export default function SessionCard({
               ▤
             </button>
             <Link
+              className="action-btn scard-drive-btn"
+              to={`/drive/${card.session_id}`}
+              title="Open the phone cockpit: read, tap options, reply"
+            >
+              ▸ drive
+            </Link>
+            <Link
               className="action-btn"
               to={`/follow?sessions=${card.session_id}`}
               title="Live-tail this session"

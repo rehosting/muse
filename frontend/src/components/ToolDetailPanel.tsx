@@ -22,7 +22,7 @@ export default function ToolDetailPanel({
 
   return (
     <>
-      <div className="detail-overlay" onClick={onClose} />
+      <div className="detail-overlay detail-overlay-passthrough" onClick={onClose} />
       <aside className="detail-panel">
         <div className="detail-head">
           <span className="tool-name">{tool.name}</span>
