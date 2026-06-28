@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { AlertEvent, AlertRules, NotifyConfig, NotifyResult } from "../api/types";
+import type {
+  AlertEvent,
+  AlertRules,
+  NotifyConfig,
+  NotifyResult,
+  PushSubscriptionInfo,
+} from "../api/types";
+import { subscribeToPush, unsubscribeFromPush } from "../registerSW";
 
 const DEFAULT: NotifyConfig = {
   enabled: false,
@@ -9,6 +16,7 @@ const DEFAULT: NotifyConfig = {
   topic: "",
   priority: 3,
   token: null,
+  web_push_enabled: false,
 };
 
 const DEFAULT_RULES: AlertRules = {
@@ -34,6 +42,40 @@ export default function AlertsPage() {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [rules, setRules] = useState<AlertRules>(DEFAULT_RULES);
   const [log, setLog] = useState<AlertEvent[]>([]);
+  const [devices, setDevices] = useState<PushSubscriptionInfo[]>([]);
+  const [pushState, setPushState] = useState<string>("");
+
+  const refreshDevices = () =>
+    api.getPushSubscriptions().then(setDevices).catch(() => {});
+  useEffect(() => {
+    refreshDevices();
+  }, []);
+
+  const enablePush = async () => {
+    setPushState("…requesting permission");
+    try {
+      const r = await subscribeToPush();
+      if (r === "subscribed") {
+        // Turn the channel on server-side so AlertsWatcher fans out to this device.
+        const saved = await api.setNotifyConfig({ ...cfg, web_push_enabled: true });
+        setCfg({ ...DEFAULT, ...saved });
+        setPushState("✓ this device is subscribed");
+        refreshDevices();
+      } else if (r === "denied") {
+        setPushState("⚠ notification permission denied");
+      } else {
+        setPushState("⚠ web push isn't supported here (on iOS, install to Home Screen first)");
+      }
+    } catch (e) {
+      setPushState(`⚠ ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const disablePush = async () => {
+    await unsubscribeFromPush();
+    setPushState("unsubscribed this device");
+    refreshDevices();
+  };
 
   useEffect(() => {
     api
@@ -100,6 +142,38 @@ export default function AlertsPage() {
         service, so this works even though muse runs on localhost. The topic name is the secret;
         keep it unguessable.
       </p>
+
+      <div className="alerts-card">
+        <h2 className="alerts-card-title">Push to this device (recommended for phone)</h2>
+        <p className="alerts-sub">
+          Web Push delivers straight to this browser/PWA — no separate app. A subscribed device
+          gets alerts <strong>whether or not it's on your tailnet</strong> (delivery is outbound
+          via the browser's push service). Tapping a notification opens the session cockpit, which
+          needs muse reachable (i.e. back on the tailnet).
+        </p>
+        <p className="alerts-hint">
+          On iPhone/iPad, first add muse to your Home Screen (Share → Add to Home Screen) and open
+          it from there, then enable below — iOS only allows web push from an installed app.
+        </p>
+        <div className="alerts-actions">
+          <button className="action-btn primary" onClick={enablePush}>
+            Enable on this device
+          </button>
+          <button className="action-btn" onClick={disablePush} disabled={!devices.length}>
+            Unsubscribe this device
+          </button>
+          {pushState && <span className="alerts-saved">{pushState}</span>}
+        </div>
+        {devices.length > 0 && (
+          <ul className="alerts-devices">
+            {devices.map((d) => (
+              <li key={d.endpoint} title={d.endpoint}>
+                {d.label || "device"} <span className="alerts-hint">{d.created_at ?? ""}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="alerts-card">
         <div className="alerts-row">

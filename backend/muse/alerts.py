@@ -232,10 +232,11 @@ class AlertsWatcher:
 
     async def _fire(self, cfg, rules, summary, kind: str, message: str, detail: str) -> None:
         delivered, deliver_detail = False, "notifications disabled"
-        if cfg.enabled and cfg.topic.strip():
-            # base_url honors MUSE_PUBLIC_URL so a ntfy tap on a phone opens a
-            # reachable (e.g. tailscale) address, not 127.0.0.1.
-            click = f"{_base_url()}/sessions/{summary.session_id}"
+        ntfy_on = cfg.enabled and cfg.topic.strip()
+        if ntfy_on or cfg.web_push_enabled:
+            # base_url honors MUSE_PUBLIC_URL so a tap on a phone opens a reachable
+            # (e.g. tailscale) address, not 127.0.0.1. Deep-link to the cockpit.
+            click = f"{_base_url()}/drive/{summary.session_id}"
             res = await asyncio.to_thread(
                 self.service.send_notification,
                 detail or message,
@@ -244,7 +245,11 @@ class AlertsWatcher:
                 tags="warning" if kind == "error" else "bell",
                 priority=4 if kind == "error" else None,
             )
-            delivered, deliver_detail = res.ok, res.detail
+            # send_notification fans out to web push internally; res reflects ntfy.
+            if ntfy_on:
+                delivered, deliver_detail = res.ok, res.detail
+            else:
+                delivered, deliver_detail = True, "web push"
         self._log.append(
             AlertEvent(
                 ts=datetime.now(timezone.utc),

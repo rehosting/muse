@@ -117,6 +117,33 @@ def sanitize_draft(text: str) -> str:
     return t
 
 
+def _parse_suggestions(text: str) -> list[str]:
+    """Parse the model's JSON array of short reply suggestions; lenient.
+
+    Each is sanitized like a draft (strips slash/bash leaders) since the user may
+    tap it straight into a live prompt. Returns at most 4, dropping any that
+    sanitize to nothing."""
+    t = (text or "").strip()
+    start, end = t.find("["), t.rfind("]")
+    if start < 0 or end <= start:
+        return []
+    try:
+        data = json.loads(t[start : end + 1])
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[str] = []
+    for item in data:
+        if not isinstance(item, str):
+            continue
+        try:
+            out.append(sanitize_draft(item))
+        except RunnerError:
+            continue
+    return out[:4]
+
+
 def _split_triage_block(text: str) -> dict[str, str]:
     """Parse the ```triage fenced JSON object; lenient — {} on any failure."""
     marker = "```triage"
@@ -524,11 +551,33 @@ class SessionService:
         tags: str | None = None, priority: int | None = None, config: NotifyConfig | None = None,
     ) -> NotifyResult:
         """Send a push using the stored (or supplied) config. The seam the rules
-        engine will call when a session errors/finishes/awaits the user."""
+        engine calls when a session errors/finishes/awaits the user. Delivers via
+        ntfy and/or Web Push (independent channels) per the config flags."""
         cfg = config or self.notify_store.get_config()
-        return notify.send(
+        result = notify.send(
             cfg, message, title=title, click=click, tags=tags, priority=priority
         )
+        if cfg.web_push_enabled:
+            self._fan_out_web_push(title or "muse", message, click)
+        return result
+
+    def _fan_out_web_push(self, title: str, body: str, click: str | None) -> None:
+        """Best-effort Web Push to every subscribed device; prune dead endpoints.
+        Works whether or not the device is currently on the tailnet."""
+        import json as _json
+
+        from .. import webpush
+
+        subs = self.notify_store.list_subscriptions()
+        if not subs:
+            return
+        payload = _json.dumps({"title": title, "body": body, "url": click or "/"})
+        for sub in subs:
+            ok, expired = webpush.send_web_push(
+                {"endpoint": sub.endpoint, "keys": sub.keys}, payload
+            )
+            if expired:
+                self.notify_store.remove_subscription(sub.endpoint)
 
     # --- annotations (writable; never touches ~/.claude) --------------------
     def get_annotations(self, session_id: str) -> Annotations:
@@ -1643,6 +1692,11 @@ class SessionService:
             return None
         return self._enqueue_ai("draft_reply", {"session_id": session_id})
 
+    def enqueue_suggest_replies(self, session_id: str) -> Optional["AIJob"]:
+        if not any(s.session_id == session_id for s in self.list_sessions()):
+            return None
+        return self._enqueue_ai("suggest_replies", {"session_id": session_id})
+
     def enqueue_diagnose(self, session_id: str) -> Optional["AIJob"]:
         if not any(s.session_id == session_id for s in self.list_sessions()):
             return None
@@ -1682,7 +1736,7 @@ class SessionService:
             prompt = ai_context.pack_for_day(self, params.get("day", ""))
         elif kind == "weekly_retro":
             prompt = ai_context.pack_for_week(self, params.get("week_start", ""))
-        elif kind == "draft_reply":
+        elif kind in ("draft_reply", "suggest_replies"):
             prompt = ai_context.pack_for_reply(
                 self, params.get("session_id", ""),
                 pane_text=self._pane_text(params.get("session_id", "")),
@@ -1731,6 +1785,8 @@ class SessionService:
         """Persist non-ask outputs into the existing stores (notes/retros)."""
         if kind == "draft_reply":
             return {"draft": sanitize_draft(text)}  # ephemeral: job result only
+        if kind == "suggest_replies":
+            return {"suggestions": _parse_suggestions(text)}  # ephemeral: job result only
         if kind == "triage":
             return {"lines": _split_triage_block(text)}
         if kind == "diagnose":
