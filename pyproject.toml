@@ -12,6 +12,7 @@ dependencies = [
     "anyio>=4.4",
     "orjson>=3.10",
     "mcp>=1.27.2",
+    "pywebpush>=2.0",
 ]
 
 [project.scripts]
