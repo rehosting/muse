@@ -753,6 +753,62 @@ export interface NotifyConfig {
   topic: string;
   priority: number;
   token: string | null;
+  web_push_enabled: boolean;
+}
+
+export interface PushSubscriptionInfo {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  label: string;
+  created_at?: string | null;
+}
+
+export interface PendingOption {
+  id: string;
+  label: string;
+  description: string | null;
+  kind: "menu" | "free_text";
+}
+
+export interface TmuxPane {
+  pane_id: string;
+  session_name: string;
+  window_index: number;
+  window_name: string;
+  window_active: boolean;
+  pane_index: number;
+  pane_active: boolean;
+  command: string;
+  cwd: string;
+  title: string;
+  session_attached: boolean;
+  muse_session_id: string | null;
+  context_pct: number | null;
+  status: "needs_you" | "responded" | "working" | "idle";
+  attention: string;
+  mode: "default" | "acceptEdits" | "plan" | "bypass" | null;
+  preview: string;
+  options: PendingOption[];
+}
+
+export interface TmuxLayout {
+  available: boolean;
+  panes: TmuxPane[];
+  reason: string | null;
+}
+
+export interface PendingOptions {
+  session_id: string;
+  source: "permission" | "tool_question" | "none";
+  available: boolean;
+  prompt: string;
+  options: PendingOption[];
+  current_index: number | null;
+  fingerprint: string;
+  remaining_questions: number;
+  pane_id: string | null;
+  in_tmux: boolean;
+  reason: string | null;
 }
 
 export interface NotifyResult {

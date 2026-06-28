@@ -24,6 +24,9 @@ import type {
   NotifyConfig,
   OpenLoop,
   NotifyResult,
+  PendingOptions,
+  PushSubscriptionInfo,
+  TmuxLayout,
   Pack,
   PersistedOutput,
   ReentryBrief,
@@ -313,4 +316,86 @@ export const api = {
     getJSON<{ ok: boolean; text: string; error?: string }>(
       `/api/sessions/${sessionId}/terminal?lines=${lines}`,
     ),
+
+  // --- tmux topology (mobile panes view) ---
+  getTmuxLayout: (signal?: AbortSignal) =>
+    getJSON<TmuxLayout>("/api/tmux/layout", signal),
+
+  // Pane ids look like "%12" — the leading % is URL-encoding's escape char, so it
+  // MUST be encoded (→ "%2512") or the server decodes it into a different/invalid id.
+  sendToPane: (paneId: string, text: string, submit = true) =>
+    sendJSON<{ ok: boolean }>(
+      "POST",
+      `/api/tmux/panes/${encodeURIComponent(paneId)}/send`,
+      { text, submit },
+    ),
+
+  sendPaneKey: (paneId: string, key: string) =>
+    sendJSON<{ ok: boolean }>(
+      "POST",
+      `/api/tmux/panes/${encodeURIComponent(paneId)}/key`,
+      { key },
+    ),
+
+  // Cycle Claude Code's permission mode (Shift+Tab); returns where it landed.
+  cyclePaneMode: (paneId: string) =>
+    sendJSON<{ ok: boolean; mode: string | null }>(
+      "POST",
+      `/api/tmux/panes/${encodeURIComponent(paneId)}/mode`,
+      {},
+    ),
+
+  newPaneSession: (cwd?: string) =>
+    sendJSON<{ ok: boolean; pane_id: string }>("POST", "/api/tmux/new", { cwd: cwd ?? null }),
+
+  // --- web push notifications ---
+  getVapidKey: () => getJSON<{ public_key: string }>("/api/notify/vapid-key"),
+
+  getPushSubscriptions: () =>
+    getJSON<PushSubscriptionInfo[]>("/api/notify/subscriptions"),
+
+  addPushSubscription: (sub: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+    label: string;
+  }) => sendJSON<{ ok: boolean }>("POST", "/api/notify/subscriptions", sub),
+
+  removePushSubscription: (endpoint: string) =>
+    sendJSON<{ ok: boolean }>("DELETE", "/api/notify/subscriptions", { endpoint }),
+
+  // --- pending options (tap-to-select) ---
+  getPendingOptions: (sessionId: string, signal?: AbortSignal) =>
+    getJSON<PendingOptions>(`/api/sessions/${sessionId}/options`, signal),
+
+  suggestReplies: (sessionId: string) =>
+    sendJSON<AIJob>("POST", `/api/sessions/${sessionId}/suggest-replies`),
+
+  // Returns {ok:true} on success, or {ok:false, stale, options} on a 409 stale-menu
+  // (the picker re-renders the fresh options instead of acting blindly).
+  selectPendingOption: async (
+    sessionId: string,
+    optionId: string,
+    fingerprint: string,
+    opts: { method?: "digit" | "arrow"; freeText?: string } = {},
+  ): Promise<{ ok: boolean; stale?: boolean; options?: PendingOptions }> => {
+    const res = await fetch(`/api/sessions/${sessionId}/options/select`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        option_id: optionId,
+        fingerprint,
+        method: opts.method ?? "digit",
+        free_text: opts.freeText ?? null,
+      }),
+    });
+    if (res.status === 409) {
+      const body = await res.json();
+      return { ok: false, stale: true, options: body.options as PendingOptions };
+    }
+    if (!res.ok) {
+      notifyAuthRequired(res.status);
+      throw new Error(`${res.status} ${res.statusText} for select`);
+    }
+    return { ok: true };
+  },
 };
