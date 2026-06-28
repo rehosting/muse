@@ -69,6 +69,16 @@ DRAFT_REPLY = (
     "no preamble, no quotes, no markdown fences, no slash commands."
 )
 
+SUGGEST_REPLIES = (
+    "You are suggesting 2-4 SHORT candidate next replies the USER could tap to send "
+    "to their AI coding assistant, which has paused awaiting input. " + _UNTRUSTED +
+    "From the session digest, todos, the user's recent replies (match their terse, "
+    "directive tone), and the terminal screen, propose distinct, concrete options "
+    "(approve, pick a path, name the next task, point at a bug). Each ≤8 words. "
+    'Output ONLY a JSON array of strings, e.g. ["yes, proceed", "run the tests first"]'
+    " — no preamble, no markdown fences."
+)
+
 DIAGNOSE = (
     "You are muse, diagnosing why an AI coding session is stuck. " + _UNTRUSTED +
     "You receive the session digest plus detected failure patterns (retry loops / "
@@ -92,6 +102,7 @@ BY_KIND = {
     "daily_digest": DAILY_DIGEST,
     "weekly_retro": WEEKLY_RETRO,
     "draft_reply": DRAFT_REPLY,
+    "suggest_replies": SUGGEST_REPLIES,
     "diagnose": DIAGNOSE,
     "triage": TRIAGE,
 }

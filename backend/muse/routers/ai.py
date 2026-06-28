@@ -92,6 +92,17 @@ def draft_reply(session_id: str, request: Request) -> AIJob:
     return job
 
 
+@router.post("/sessions/{session_id}/suggest-replies", response_model=AIJob)
+def suggest_replies(session_id: str, request: Request) -> AIJob:
+    """Suggest 2-4 short, tap-able candidate replies for the phone cockpit. The
+    result.suggestions array is ephemeral (job result only); the human still picks
+    and sends — muse never auto-sends from this endpoint."""
+    job = _service(request).enqueue_suggest_replies(session_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return job
+
+
 @router.post("/sessions/{session_id}/diagnose", response_model=AIJob)
 def diagnose(session_id: str, request: Request) -> AIJob:
     job = _service(request).enqueue_diagnose(session_id)
