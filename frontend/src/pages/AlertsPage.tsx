@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type {
   AlertEvent,
   AlertRules,
+  HooksStatus,
   NotifyConfig,
   NotifyResult,
   PushSubscriptionInfo,
@@ -44,11 +45,13 @@ export default function AlertsPage() {
   const [log, setLog] = useState<AlertEvent[]>([]);
   const [devices, setDevices] = useState<PushSubscriptionInfo[]>([]);
   const [pushState, setPushState] = useState<string>("");
+  const [hooks, setHooks] = useState<HooksStatus | null>(null);
 
   const refreshDevices = () =>
     api.getPushSubscriptions().then(setDevices).catch(() => {});
   useEffect(() => {
     refreshDevices();
+    api.getHooksStatus().then(setHooks).catch(() => {});
   }, []);
 
   const enablePush = async () => {
@@ -285,6 +288,32 @@ export default function AlertsPage() {
           />
         </div>
         <p className="alerts-hint">Rules save automatically. Delivery still requires the toggle above to be on.</p>
+      </div>
+
+      <div className="alerts-card">
+        <h2 className="alerts-h2">Instant telemetry (Claude Code hooks)</h2>
+        <p className="alerts-hint" style={{ marginBottom: 10 }}>
+          With hooks installed, Claude Code itself tells muse the moment a turn ends or a
+          permission is needed — notifications fire instantly and queued replies deliver on the
+          spot, instead of waiting for the {rules.poll_seconds}s poll.
+        </p>
+        {hooks === null ? (
+          <p className="alerts-hint">…</p>
+        ) : hooks.installed_events.length >= hooks.expected_events.length ? (
+          <p className="alerts-hint">
+            <span className="alerts-ok">● installed</span> — {hooks.events_seen} event(s) seen
+            {hooks.last_event_at &&
+              `, last at ${new Date(hooks.last_event_at).toLocaleTimeString([], { hour12: false })}`}
+            {hooks.events_seen === 0 &&
+              " (events start flowing when a Claude Code session launched after install ends a turn)"}
+          </p>
+        ) : (
+          <p className="alerts-hint">
+            <span className="alerts-err">○ not installed</span> — run{" "}
+            <code>muse hooks install</code> on the server, then restart your Claude Code
+            sessions. The polling watcher above keeps working either way.
+          </p>
+        )}
       </div>
 
       {log.length > 0 && (
