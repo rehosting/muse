@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from .. import db
-from ..models import AutopilotConfig, AutopilotLogEntry
+from ..models import AutopilotConfig, AutopilotLogEntry, QueuedReply
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS autopilot_config (
@@ -35,6 +35,24 @@ CREATE TABLE IF NOT EXISTS autopilot_kv (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS autopilot_log (
     ts TEXT, session_id TEXT, action TEXT, detail TEXT
 );
+CREATE TABLE IF NOT EXISTS reply_queue (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    text       TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending',  -- pending | sent | cancelled | failed
+    mode       TEXT NOT NULL DEFAULT 'turn',     -- turn (own turn) | append (glue to previous)
+    sent_at    TEXT,
+    error      TEXT
+);
+CREATE INDEX IF NOT EXISTS reply_queue_pending
+    ON reply_queue(session_id) WHERE status = 'pending';
+CREATE TABLE IF NOT EXISTS tmux_snapshots (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            TEXT NOT NULL,   -- when captured (ISO)
+    sig           TEXT NOT NULL,   -- topology signature (change detection)
+    snapshot_json TEXT NOT NULL    -- serialized {ts, groups:[...]}
+);
 """
 
 # Columns added after the initial release (migrate existing DBs).
@@ -49,6 +67,7 @@ _MIGRATIONS = [
     # requested against (Phase B discards the draft if the session moved on).
     "ALTER TABLE autopilot_config ADD COLUMN ai_pending_job_id TEXT",
     "ALTER TABLE autopilot_config ADD COLUMN ai_requested_updated_at TEXT",
+    "ALTER TABLE reply_queue ADD COLUMN mode TEXT NOT NULL DEFAULT 'turn'",
 ]
 
 
@@ -111,6 +130,33 @@ class AutopilotStore:
                 self._conn.commit()
 
         db.retry_locked(_do)
+
+    # --- tmux layout snapshots (session restore) ---------------------------
+    def save_snapshot(self, snapshot_json: str, sig: str) -> None:
+        """Append a topology snapshot and prune to the last ~20 rows (a small history
+        ring so a good last-known-good survives even if a newer capture is thin)."""
+
+        def _do() -> None:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO tmux_snapshots(ts, sig, snapshot_json) VALUES(?,?,?)",
+                    (_now(), sig, snapshot_json),
+                )
+                self._conn.execute(
+                    "DELETE FROM tmux_snapshots WHERE id NOT IN "
+                    "(SELECT id FROM tmux_snapshots ORDER BY id DESC LIMIT 20)"
+                )
+                self._conn.commit()
+
+        db.retry_locked(_do)
+
+    def latest_snapshot(self) -> Optional[tuple[str, str]]:
+        """The most recent (sig, snapshot_json), or None if nothing captured yet."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT sig, snapshot_json FROM tmux_snapshots ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return (row["sig"], row["snapshot_json"]) if row else None
 
     # --- active-hours schedule ---------------------------------------------
     def get_schedule(self) -> tuple[bool, int, int]:
@@ -242,6 +288,131 @@ class AutopilotStore:
         if row is None:
             return None, None
         return row["ai_pending_job_id"], _dt(row["ai_requested_updated_at"])
+
+    # --- reply queue ----------------------------------------------------------
+    # User-authored messages waiting for their session's turn to end. The
+    # controller delivers them (it owns automated tmux writes); these methods are
+    # just FIFO bookkeeping. Delivered/cancelled rows are kept briefly as history.
+
+    def queue_add(self, sid: str, text: str, mode: str = "turn") -> QueuedReply:
+        def _do() -> int:
+            with self._lock:
+                cur = self._conn.execute(
+                    "INSERT INTO reply_queue(session_id, text, created_at, mode) "
+                    "VALUES(?,?,?,?)",
+                    (sid, text, _now(), mode),
+                )
+                self._conn.commit()
+                return int(cur.lastrowid)
+
+        qid = db.retry_locked(_do)
+        return QueuedReply(id=qid, session_id=sid, text=text, mode=mode,
+                           created_at=datetime.now(timezone.utc))
+
+    def queue_for(self, sid: str, limit: int = 20) -> list[QueuedReply]:
+        """This session's queue: all pending items (FIFO) + a few recent outcomes."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM (SELECT * FROM reply_queue WHERE session_id=? "
+                "ORDER BY (status='pending') DESC, id DESC LIMIT ?) ORDER BY id ASC",
+                (sid, limit),
+            ).fetchall()
+        return [self._row_to_queued(r) for r in rows]
+
+    def queue_next(self, sid: str) -> Optional[QueuedReply]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM reply_queue WHERE session_id=? AND status='pending' "
+                "ORDER BY id ASC LIMIT 1",
+                (sid,),
+            ).fetchone()
+        return self._row_to_queued(row) if row else None
+
+    def queue_next_batch(self, sid: str) -> list[QueuedReply]:
+        """What one delivery should type: the oldest pending item plus any items
+        immediately after it whose mode is 'append' (they glue on rather than
+        waiting for their own turn)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM reply_queue WHERE session_id=? AND status='pending' "
+                "ORDER BY id ASC",
+                (sid,),
+            ).fetchall()
+        batch: list[QueuedReply] = []
+        for r in rows:
+            item = self._row_to_queued(r)
+            if batch and item.mode != "append":
+                break
+            batch.append(item)
+        return batch
+
+    def queue_set_mode(self, sid: str, qid: int, mode: str) -> bool:
+        """Flip a still-pending item between 'turn' and 'append'."""
+        def _do() -> bool:
+            with self._lock:
+                cur = self._conn.execute(
+                    "UPDATE reply_queue SET mode=? "
+                    "WHERE id=? AND session_id=? AND status='pending'",
+                    (mode, qid, sid),
+                )
+                self._conn.commit()
+                return cur.rowcount > 0
+
+        return db.retry_locked(_do)
+
+    def queue_counts(self) -> dict[str, int]:
+        """Pending count per session — one cheap query for board/panes badges."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, COUNT(*) AS n FROM reply_queue "
+                "WHERE status='pending' GROUP BY session_id"
+            ).fetchall()
+        return {r["session_id"]: r["n"] for r in rows}
+
+    def queue_cancel(self, sid: str, qid: int) -> bool:
+        """Cancel one still-pending item. False if it's gone or already delivered."""
+        def _do() -> bool:
+            with self._lock:
+                cur = self._conn.execute(
+                    "UPDATE reply_queue SET status='cancelled' "
+                    "WHERE id=? AND session_id=? AND status='pending'",
+                    (qid, sid),
+                )
+                self._conn.commit()
+                return cur.rowcount > 0
+
+        return db.retry_locked(_do)
+
+    def queue_mark(self, qid: int, status: str, error: Optional[str] = None) -> None:
+        def _do() -> None:
+            with self._lock:
+                self._conn.execute(
+                    "UPDATE reply_queue SET status=?, sent_at=?, error=? WHERE id=?",
+                    (status, _now() if status == "sent" else None, error, qid),
+                )
+                # Bound history: keep the most recent 200 non-pending rows.
+                self._conn.execute(
+                    "DELETE FROM reply_queue WHERE status != 'pending' AND id NOT IN "
+                    "(SELECT id FROM reply_queue WHERE status != 'pending' "
+                    "ORDER BY id DESC LIMIT 200)"
+                )
+                self._conn.commit()
+
+        db.retry_locked(_do)
+
+    @staticmethod
+    def _row_to_queued(r: sqlite3.Row) -> QueuedReply:
+        keys = r.keys()
+        return QueuedReply(
+            id=r["id"],
+            session_id=r["session_id"],
+            text=r["text"],
+            created_at=_dt(r["created_at"]),
+            status=r["status"],
+            mode=(r["mode"] if "mode" in keys else "turn") or "turn",
+            sent_at=_dt(r["sent_at"]),
+            error=r["error"],
+        )
 
     # --- log ----------------------------------------------------------------
     def log(self, sid: str, action: str, detail: str = "") -> None:

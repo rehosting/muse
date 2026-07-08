@@ -5,22 +5,34 @@ back-off policies."""
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .. import discovery as session_discovery
+from .. import options as opt
 from ..config import get_settings
 from ..models import AutopilotConfig, AutopilotSession, AutopilotState
 from ..usage_cache import context_pcts, scan_all
 from . import sessions as live_discovery
+from . import snapshot as layout_snapshot
 from . import tmux
 from .resettime import parse_reset_time
 from .store import AutopilotStore
 
 TICK_SECONDS = 5
+# Layout snapshots for session-restore: check the topology at most this often, and only
+# write when the structure changed (or a long backstop elapsed) — change-driven, so it
+# doesn't churn while you're just working inside a session.
+SNAPSHOT_CHECK_SECONDS = 25
+SNAPSHOT_BACKSTOP_SECONDS = 1800
 INJECT_STATUSES = {"idle"}  # only when a turn finished and it's awaiting the user
+# Minimum gap between queued-reply deliveries to the same session: after a send
+# the status file takes a moment to flip to busy, so without a floor the next
+# tick could double-fire into the same idle turn.
+QUEUE_COOLDOWN_SECONDS = 15
 
 
 def _dt_or_none(value) -> Optional[datetime]:
@@ -49,6 +61,10 @@ class AutopilotController:
         # Optional observer for parsed usage-limit reset times (wired to the
         # usage-history store in main.py so stats can anchor the 5h window).
         self.on_reset = None
+        # Optional observer for limit-hit sightings: on_limit("5h"|"week") records
+        # the window's spend as an observed ceiling (subscription plans publish no
+        # $ caps, so the wall's location is only learnable by hitting it).
+        self.on_limit = None
         # AI idle-mode callables (wired in main.py to the SessionService — same
         # pattern as on_reset, avoiding an import cycle):
         #   enqueue_draft(sid) -> AIJob | None
@@ -57,6 +73,11 @@ class AutopilotController:
         self.enqueue_draft = None
         self.get_ai_job = None
         self.ai_cost_today = None
+        # Last queued-reply delivery per session (monotonic secs), for the cooldown.
+        self._queue_sent_at: dict[str, float] = {}
+        # Layout-snapshot bookkeeping (monotonic secs): when we last checked/wrote.
+        self._last_snapshot_check = 0.0
+        self._last_snapshot_write = 0.0
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -172,7 +193,138 @@ class AutopilotController:
     # board ticker).
     _context_pcts = staticmethod(context_pcts)
 
+    # --- queued replies -------------------------------------------------------
+    # Deliver user-authored "send when this turn ends" messages. This runs inside
+    # the controller because the controller is the one disciplined automated
+    # tmux-write site — same guards as autopilot injection (idle status, pane
+    # re-check, rate-limit banner, visible-menu refusal), but it does NOT require
+    # autopilot to be armed: queueing was an explicit user action.
+
+    def _queue_block_reason(
+        self, sid: str, live: dict, now_mono: float, *, force: bool = False
+    ) -> Optional[str]:
+        """Why the next queued reply for `sid` can't be delivered right now, or
+        None if it would go. `force` (a user's explicit "send now") skips the
+        wait-for-idle gate but never overrides the guards that would corrupt the
+        session — typing into an open menu or over a usage-limit banner."""
+        ls = live.get(sid)
+        if ls is None or not ls.pane_id:
+            return "session isn’t running in tmux"
+        if not force:
+            if ls.waiting_for:
+                return f"waiting for {ls.waiting_for}"
+            if ls.status not in INJECT_STATUSES:
+                return f"session is {ls.status}, not idle"
+            if now_mono - self._queue_sent_at.get(sid, 0.0) < QUEUE_COOLDOWN_SECONDS:
+                return "just delivered — cooling down"
+        pane = tmux.capture_pane(ls.pane_id, 40)
+        if _RATE_LIMIT_RE.search(pane):
+            self._observe_limit(pane)
+            return "usage-limit banner on screen"
+        # A visible ❯ menu means typed text would land IN the dialog (digits
+        # select options!) — never deliver over one, even when forced.
+        if opt.parse_permission_menu(pane) is not None:
+            return "a menu is open — answer it first"
+        return None
+
+    def _send_batch(self, sid: str, pane_id: str, now_mono: float) -> tuple[list[int], Optional[str]]:
+        """Deliver the oldest pending item plus any directly-following 'append'
+        items (they asked to share one message). Returns (sent ids, error)."""
+        batch = self.store.queue_next_batch(sid)
+        if not batch:
+            return [], None
+        combined = "\n".join(i.text for i in batch)
+        if "\n" in combined:
+            # Multiline goes as a bracketed paste — raw LF via send-keys would
+            # submit each line as its own message.
+            ok, err = tmux.paste_text(pane_id, combined)
+        else:
+            ok, err = tmux.send_text(pane_id, combined)
+        if ok:
+            self._queue_sent_at[sid] = now_mono
+            for i in batch:
+                self.store.queue_mark(i.id, "sent")
+            self.store.log(
+                sid, "queue_sent",
+                f"{pane_id} ← {combined[:80]}"
+                + (f" ({len(batch)} items)" if len(batch) > 1 else ""),
+            )
+            return [i.id for i in batch], None
+        for i in batch:
+            self.store.queue_mark(i.id, "failed", error=err)
+        self.store.log(sid, "error", f"queued send failed: {err}")
+        return [], err
+
+    def deliver_queued(self, session_id: Optional[str] = None) -> list[int]:
+        """Try to deliver the next queued reply for `session_id` (or for every
+        session with a pending queue). Returns the queue ids actually sent.
+        Safe to call from any thread; each delivery re-checks the world fresh."""
+        counts = self.store.queue_counts()
+        if session_id is not None:
+            counts = {session_id: counts[session_id]} if session_id in counts else {}
+        if not counts:
+            return []
+        live = {s.session_id: s for s in live_discovery.discover()}
+        now_mono = time.monotonic()
+        sent: list[int] = []
+        for sid in counts:
+            if self._queue_block_reason(sid, live, now_mono) is not None:
+                continue
+            ids, _ = self._send_batch(sid, live[sid].pane_id, now_mono)
+            sent.extend(ids)
+        return sent
+
+    def deliver_now(self, session_id: str) -> tuple[list[int], Optional[str]]:
+        """User override: deliver the next batch immediately, skipping the
+        wait-for-idle gate but not the menu / rate-limit guards. Returns
+        (sent ids, reason-it-was-blocked)."""
+        if session_id not in self.store.queue_counts():
+            return [], "nothing queued"
+        live = {s.session_id: s for s in live_discovery.discover()}
+        now_mono = time.monotonic()
+        reason = self._queue_block_reason(session_id, live, now_mono, force=True)
+        if reason is not None:
+            return [], reason
+        return self._send_batch(session_id, live[session_id].pane_id, now_mono)
+
+    def queue_hold_reason(self, session_id: str) -> Optional[str]:
+        """Why this session's pending queue isn't delivering (for the UI), or
+        None if it has no pending items or would deliver on the next tick."""
+        if session_id not in self.store.queue_counts():
+            return None
+        live = {s.session_id: s for s in live_discovery.discover()}
+        return self._queue_block_reason(session_id, live, time.monotonic())
+
+    def _maybe_snapshot(self) -> None:
+        """Capture the tmux topology for session-restore, throttled and change-driven.
+        Runs regardless of arming (it's independent of message injection)."""
+        now = time.monotonic()
+        if now - self._last_snapshot_check < SNAPSHOT_CHECK_SECONDS:
+            return
+        self._last_snapshot_check = now
+        snap = layout_snapshot.build_snapshot()
+        if snap is None:  # tmux down or no Claude windows → keep the last-known-good
+            return
+        sig = layout_snapshot.topology_sig(snap)
+        latest = self.store.latest_snapshot()
+        unchanged = latest is not None and latest[0] == sig
+        if unchanged and (now - self._last_snapshot_write) < SNAPSHOT_BACKSTOP_SECONDS:
+            return
+        self.store.save_snapshot(json.dumps(snap), sig)
+        self._last_snapshot_write = now
+
     def _tick(self) -> None:
+        # Session-restore snapshot — independent of arming; never let it break the loop.
+        try:
+            self._maybe_snapshot()
+        except Exception:
+            pass
+        # Queued replies deliver regardless of arming/schedule — an explicit user
+        # "send this when ready" beats the autopilot on/off switch.
+        try:
+            self.deliver_queued()
+        except Exception:
+            pass
         if not self.store.is_armed() or not self._within_hours():
             return
         configs = self.store.all_configs()
@@ -212,12 +364,7 @@ class AutopilotController:
             # Usage-limit back-off: peek at the pane before acting.
             pane = tmux.capture_pane(ls.pane_id, 40)
             if _RATE_LIMIT_RE.search(pane):
-                reset = parse_reset_time(pane, now)
-                if reset and self.on_reset:
-                    try:
-                        self.on_reset(reset)  # anchor stats' 5h window
-                    except Exception:
-                        pass
+                reset = self._observe_limit(pane, now)
                 until = reset if (reset and reset > now) else now + timedelta(seconds=cfg.backoff_seconds)
                 self.store.set_backoff(sid, until)
                 when = until.astimezone().strftime("%a %H:%M")
@@ -255,6 +402,23 @@ class AutopilotController:
                 self.store.log(sid, "injected", detail)
             else:
                 self.store.log(sid, "error", err)
+
+    def _observe_limit(self, pane_text: str, now: Optional[datetime] = None):
+        """A rate-limit banner is on screen: report the parsed reset time (anchors
+        stats' 5h window) and the hit itself (calibrates the observed ceiling).
+        Returns the parsed reset time, if any."""
+        reset = parse_reset_time(pane_text, now or datetime.now(timezone.utc))
+        if reset and self.on_reset:
+            try:
+                self.on_reset(reset)
+            except Exception:
+                pass
+        if self.on_limit:
+            try:
+                self.on_limit("week" if "week" in pane_text.lower() else "5h")
+            except Exception:
+                pass
+        return reset
 
     # --- AI idle mode (two-phase) ---------------------------------------------
     # Phase A requests a draft at exactly the point message-mode would inject

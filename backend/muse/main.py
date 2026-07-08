@@ -29,12 +29,14 @@ from .routers import (
     auth,
     autopilot,
     board,
+    hooks,
     insights,
     interact,
     investigations,
     launch,
     notify,
     options,
+    queue,
     sessions,
     stream,
     tmux,
@@ -167,6 +169,8 @@ def create_app() -> FastAPI:
     app.include_router(insights.router)
     app.include_router(interact.router)
     app.include_router(options.router)
+    app.include_router(queue.router)
+    app.include_router(hooks.router)
     app.include_router(tmux.router)
     app.include_router(auth.router)
 
