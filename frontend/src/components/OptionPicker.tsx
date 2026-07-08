@@ -45,6 +45,9 @@ export default function OptionPicker({
                   className="option-freetext-input"
                   autoFocus
                   placeholder="Type your reply…"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={freeText}
                   onChange={(e) => setFreeText(e.target.value)}
                 />
