@@ -5,7 +5,7 @@
  * opportunistically (cache-first) and let new hashes populate naturally; the SPA
  * shell ("/") is network-first so a deploy is picked up, with an offline fallback.
  */
-const CACHE = "muse-shell-v1";
+const CACHE = "muse-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -32,8 +32,11 @@ self.addEventListener("fetch", (event) => {
   // Never intercept API / SSE / auth — let the browser handle them (with cookies).
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/mcp")) return;
 
-  // Navigations: network-first, fall back to the cached shell when offline.
-  if (request.mode === "navigate") {
+  // The shell ("/") is ALWAYS network-first — navigations AND programmatic
+  // fetches (the new-build check) — so a cached copy never shadows the live
+  // index.html. Falls back to the cached shell when offline. Never writes to
+  // cache here, so cache-busted checks don't pollute it.
+  if (request.mode === "navigate" || url.pathname === "/") {
     event.respondWith(
       fetch(request).catch(() => caches.match("/", { ignoreSearch: true })),
     );
@@ -81,11 +84,15 @@ self.addEventListener("notificationclick", (event) => {
   const target = (event.notification.data && event.notification.data.url) || "/";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      const dest = new URL(target, self.location.origin);
       for (const w of wins) {
-        if ("focus" in w) {
-          w.navigate(target);
-          return w.focus();
-        }
+        if (!("focus" in w)) continue;
+        // Already on the target page (e.g. mid-reply on that very session) — just
+        // focus it. Navigating would reload the page and wipe whatever's typed.
+        const here = new URL(w.url);
+        if (here.pathname + here.search === dest.pathname + dest.search) return w.focus();
+        if ("navigate" in w) return w.navigate(target).then((c) => (c || w).focus());
+        return w.focus();
       }
       return self.clients.openWindow(target);
     }),

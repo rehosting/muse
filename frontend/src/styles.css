@@ -1581,6 +1581,16 @@ body.resizing {
 .cc-result-line {
   color: var(--text-dim);
 }
+/* Collapsed tool output (focus/phone reader): each visible row is a single
+   truncated line — no wrapping — so a wide or long Bash dump can't balloon the
+   card. Expanding the tool restores full pre-wrap output. */
+.cc-result-clamped .cc-result-body {
+  white-space: nowrap;
+}
+.cc-result-clamped .cc-result-body > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* CC-style plain unified diff for Edit/Write — green additions, red removals,
    dim context, monospace, no gutter chrome. */
 .cc-diff-add {
@@ -4869,6 +4879,206 @@ body.resizing {
 .reply-esc {
   color: var(--err);
 }
+.reply-queue {
+  white-space: nowrap;
+}
+/* Primary button in queue mode (flipped by a long press): amber, so a tap
+   clearly won't send now. */
+.reply-primary {
+  white-space: nowrap;
+  touch-action: manipulation; /* long-press shouldn't trigger text selection/callout */
+}
+/* Icon-only send/queue button: square-ish, prominent glyph — reads as a send
+   button rather than a worded action. */
+.reply-send-icon {
+  flex: none;
+  min-width: 44px;
+  padding-left: 12px;
+  padding-right: 12px;
+  font-size: 17px;
+  line-height: 1;
+}
+.reply-primary.reply-mode-queue {
+  background: color-mix(in srgb, #f59e0b 22%, transparent);
+  border-color: #f59e0b;
+  color: var(--text);
+}
+
+/* Queued replies: pending "deliver when the turn ends" chips (cockpit + board) */
+.queue-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0;
+}
+/* Why a queued reply hasn't gone yet, plus a manual override. */
+.queue-hold {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.queue-hold-reason {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-hold-send {
+  flex: none;
+  min-height: 28px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
+  font-size: 11px;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+.queue-hold-send:disabled {
+  opacity: 0.6;
+}
+.queue-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  font-size: 11px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  padding: 3px 6px 3px 9px;
+  color: var(--text-dim);
+  background: var(--bg-elev, var(--bg));
+}
+.queue-chip-icon {
+  flex: none;
+}
+.queue-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 42ch;
+}
+.queue-chip-cancel {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 2px 5px;
+  cursor: pointer;
+  border-radius: 999px;
+  -webkit-tap-highlight-color: transparent;
+}
+.queue-chip-cancel:hover {
+  color: var(--err);
+}
+.queue-chip-mode {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 999px;
+  -webkit-tap-highlight-color: transparent;
+}
+.queue-chip-mode.append { color: var(--accent); }
+.queue-chip-mode:disabled { opacity: 0.4; cursor: default; }
+.task-queued {
+  color: var(--warn, #d4a72c);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Runway bar: one-line budget cockpit (board header + panes task list) */
+.runway-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev, var(--bg));
+  text-decoration: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow: hidden;
+}
+.runway-seg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.runway-name {
+  flex: none;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.runway-track {
+  position: relative;
+  flex: 1;
+  min-width: 34px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-elev2, var(--border));
+  overflow: hidden;
+}
+.runway-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.runway-warn .runway-fill {
+  background: var(--warn, #d4a72c);
+}
+.runway-over .runway-fill {
+  background: var(--err);
+}
+.runway-pace {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: var(--text-dim);
+  opacity: 0.7;
+}
+.runway-nums {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.runway-reset {
+  flex: none;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+.runway-burn {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.runway-burn-hot {
+  color: var(--err);
+  font-weight: 600;
+}
+@media (max-width: 700px) {
+  .runway-bar .runway-reset {
+    display: none;
+  }
+  .runway-bar {
+    gap: 8px;
+  }
+}
 .reply-error {
   position: absolute;
   top: 100%;
@@ -5362,6 +5572,43 @@ body:has(.panes-detail) .navbar { display: none; }
   background: var(--bg-elev2, var(--border)); /* deliberate highlight for the current tab */
 }
 .panes-tab-badge { color: var(--running, #f59e0b); margin-left: 5px; font-size: 9px; }
+.tab-panes { color: var(--text-dim); margin-left: 5px; font-size: 10px; }
+
+/* Per-pane sub-selector for a split window (shown only when the current window
+   has >1 pane), so each tmux pane is directly tappable rather than swipe-only. */
+.panes-subtabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 10px;
+  -webkit-overflow-scrolling: touch;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev, var(--bg));
+}
+.panes-subtab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: var(--mono, monospace);
+  padding: 4px 9px;
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-dim);
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+}
+.panes-subtab:focus { outline: none; }
+.panes-subtab.active {
+  color: var(--text);
+  border-color: var(--running, #3b82f6);
+  background: var(--bg-elev2, var(--border));
+}
+.subtab-idx { color: var(--text-dim); font-size: 9px; }
 
 .panes-deck {
   flex: 1;
@@ -5378,7 +5625,8 @@ body:has(.panes-detail) .navbar { display: none; }
   flex-direction: column;
   min-width: 0;
   height: 100%;
-  padding: 10px 12px 0;
+  /* Minimal side gutters so the session box runs nearly edge-to-edge. */
+  padding: 10px 4px 0;
   gap: 8px;
 }
 .pane-card-head {
@@ -5387,6 +5635,11 @@ body:has(.panes-detail) .navbar { display: none; }
   align-items: center;
   gap: 6px;
   font-size: 12px;
+  /* The header (location, command, context %) now carries the outline that used
+     to box the conversation. */
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
 }
 .pane-card-loc { font-family: var(--mono, monospace); font-weight: 700; }
 .pane-card-cmd {
@@ -5395,6 +5648,22 @@ body:has(.panes-detail) .navbar { display: none; }
 }
 .pane-card-win, .pane-card-cwd { color: var(--text-dim); }
 .pane-card-drive { margin-left: auto; text-decoration: none; color: var(--running, #3b82f6); font-weight: 600; }
+/* Desktop terminal passthrough: the active card shows a live outline + a hint that
+   keystrokes are going to the session (vs the composer). */
+.pane-card-screen.live {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: -2px;
+}
+.pane-card-termhint {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .pane-card-screen {
   flex: 1;
   min-height: 0; /* let the terminal shrink so the keypad + compose stay on screen */
@@ -5418,14 +5687,197 @@ body:has(.panes-detail) .navbar { display: none; }
   overscroll-behavior: contain; /* vertical scroll-up stays in the terminal, not the swipe deck */
 }
 .pane-card-options { display: flex; flex-direction: column; gap: 6px; }
-.pane-card-keys { display: flex; gap: 8px; }
-.pane-card-keys .action-btn { flex: 1; min-height: 44px; font-size: 18px; }
+
+/* Terminal key bar: two rows on a 9-column grid so the arrows sit in an
+   inverted-T (↑ over ↓, Home/End over ←/→) and PgUp aligns over PgDn. */
+.pane-keybar {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+}
+.keybar-key {
+  min-height: 36px;
+  padding: 4px 2px;
+  font-size: 12px;
+  font-family: var(--mono, monospace);
+  line-height: 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.keybar-key:active { background: var(--bg-elev2); }
+.keybar-key:disabled { opacity: 0.5; }
+/* Sticky modifier, lit while armed. */
+.keybar-mod.armed {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.keybar-spacer { visibility: hidden; }
+
+/* "New version" pill (injected by registerSW, outside React). Tap to reload;
+   never auto-reloads, so in-progress input is never lost. */
+.muse-update-pill {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 14px);
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
 .pane-card-compose { display: flex; gap: 8px; align-items: flex-end; }
 .pane-card-compose .reply-input {
   flex: 1; font-size: 16px; min-height: 44px; max-height: 100px;
   padding: 10px 12px; border-radius: 10px; resize: none;
 }
 .pane-card-compose .action-btn { min-height: 44px; }
+/* ReplyBox carries flex:1 to grow across its ROW containers (board, drive). In
+   the pane card it's a child of a flex COLUMN, where flex:1 would stretch it
+   vertically and open a gap above the composer — pin it to its content height.
+   The bigger phone-first controls match the raw composer above. */
+.pane-card > .reply-box { flex: 0 0 auto; }
+.pane-card > .reply-box-cockpit .reply-input {
+  font-size: 16px; min-height: 44px; max-height: 100px;
+  padding: 10px 12px; border-radius: 10px;
+}
+/* ---- Slash-command autocomplete ("/") — floats above the composer ---- */
+.reply-box-cockpit, .pane-card-compose, .reply-box { position: relative; }
+.slash-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  max-height: 46vh;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.slash-menu-empty { padding: 12px; color: var(--text-dim); font-size: 14px; }
+.slash-menu-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y; /* let vertical drags scroll the menu, not select a row */
+}
+.slash-menu-row.active, .slash-menu-row:hover { background: var(--bg-elev2); }
+.slash-menu-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+.slash-menu-src {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--accent-dim);
+  color: var(--bg);
+  flex: 0 0 auto;
+}
+.slash-menu-src.src-project { background: var(--accent); }
+.slash-menu-desc {
+  color: var(--text-dim);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* ---- Send-options menu (long-press the send button) ---- */
+.reply-primary-wrap { position: relative; flex: 0 0 auto; display: flex; align-items: flex-end; gap: 4px; }
+/* Desktop-only caret to open the send-options menu (touch uses long-press). */
+.reply-send-caret {
+  align-self: stretch;
+  min-width: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.reply-send-caret:hover { background: var(--bg-elev2); color: var(--text); }
+.reply-send-caret[aria-expanded="true"] { background: var(--bg-elev2); color: var(--text); }
+.reply-send-caret:disabled { opacity: 0.4; cursor: default; }
+.send-menu-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.send-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.send-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 41;
+  min-width: 210px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+.send-menu-row {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  grid-template-areas: "icon label" "icon sub";
+  column-gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.send-menu-row:hover, .send-menu-row:active { background: var(--bg-elev2); }
+.send-menu-row.danger { color: var(--danger, #e06c75); }
+.send-menu-row.danger:hover { background: color-mix(in srgb, var(--danger, #e06c75) 14%, transparent); }
+.send-menu-icon { grid-area: icon; align-self: center; font-size: 16px; text-align: center; }
+.send-menu-label { grid-area: label; font-weight: 600; }
+.send-menu-sub { grid-area: sub; color: var(--text-dim); font-size: 12px; }
 .panes-dots {
   display: flex;
   justify-content: center;
@@ -5438,6 +5890,162 @@ body:has(.panes-detail) .navbar { display: none; }
 .panes-dot.active { background: var(--running, #3b82f6); }
 
 /* ---- Mobile task list (/panes): named windows grouped by attention ---- */
+/* Group rail (tmux sessions) + task list. Column on mobile (rail is a chip strip
+   above the list); row on desktop (rail is a left sidebar). */
+.panes-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+@media (pointer: fine) and (min-width: 820px) {
+  .panes-layout { flex-direction: row; }
+}
+.panes-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  flex: 0 0 auto;
+}
+@media (pointer: fine) and (min-width: 820px) {
+  .panes-rail {
+    width: 190px;
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+}
+.panes-rail-chips {
+  flex-direction: row;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  -webkit-overflow-scrolling: touch;
+}
+.panes-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.panes-rail-item:hover { background: var(--bg-elev); }
+.panes-rail-item.active { background: var(--bg-elev2); border-color: var(--border); }
+.panes-rail-item.drag-over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-elev));
+}
+.panes-rail-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.panes-rail-act {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.panes-rail-act:hover { background: var(--bg-elev2); color: var(--text); }
+.panes-rail-new { color: var(--text-dim); justify-content: center; }
+
+/* Move-to-group control on a task row (reuses .send-menu, opens downward). */
+.task-move-wrap { position: relative; display: inline-flex; }
+.task-move {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.task-move:hover { background: var(--bg-elev2); color: var(--text); }
+.task-move-menu { bottom: auto; top: calc(100% + 6px); min-width: 170px; max-height: 260px; overflow-y: auto; }
+.task-move-head { padding: 6px 10px 4px; color: var(--text-dim); font-size: 12px; font-weight: 600; }
+
+/* Deck header "Move ▾" trigger — a chip matching the mode/drive chips. Sits at the
+   far right; carries the auto-margin itself only when there are no right-side chips. */
+.pane-card-move {
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.pane-card-move:hover { color: var(--text); background: var(--bg-elev2); }
+.pane-card-head:not(:has(.pane-card-right)) > .task-move-wrap { margin-left: auto; }
+
+/* Rename ✎ affordances (desktop): revealed on row hover in the list, and shown on
+   the active deck tab. Mobile renames by holding the window name instead. */
+.task-name-row { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+.task-rename,
+.panes-tab-rename {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+.task-rename { opacity: 0; }
+.task-row:hover .task-rename { opacity: 1; }
+.task-rename:hover,
+.panes-tab-rename:hover { background: var(--bg-elev2); color: var(--text); }
+.panes-tab-rename { margin-left: 2px; }
+
+/* Group chip in the deck tab bar; grab affordance for draggable rows. */
+.panes-group-switch { position: relative; flex: 0 0 auto; display: flex; align-items: center; gap: 2px; }
+.panes-group-chip {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev2);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.panes-group-chip[aria-expanded="true"] { border-color: var(--accent, #3b82f6); }
+.panes-group-x {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev2);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.panes-group-x:hover { color: var(--text); border-color: var(--accent, #3b82f6); }
+/* Deck header sits at the TOP, so this menu opens downward (not up like the others). */
+.panes-group-menu {
+  top: calc(100% + 6px);
+  bottom: auto;
+  left: 0;
+  right: auto;
+  max-height: min(70vh, 460px);
+  overflow-y: auto;
+}
+.task-row[draggable="true"] { cursor: grab; }
+.task-row[draggable="true"]:active { cursor: grabbing; }
+
 .tasks-page {
   flex: 1;
   min-height: 0;
@@ -5445,6 +6053,57 @@ body:has(.panes-detail) .navbar { display: none; }
   -webkit-overflow-scrolling: touch;
   padding: 8px 10px;
   padding-bottom: calc(16px + var(--kb-inset, 0px));
+}
+/* Sticky header of the task list: filter + sort segmented control */
+.tasks-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+  padding: 2px 0 8px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tasks-filter {
+  width: 100%;
+  background: var(--bg-elev, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 12px;
+  min-height: 34px;
+  -webkit-appearance: none;
+}
+.tasks-filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.tasks-sort {
+  display: flex;
+  gap: 6px;
+}
+.tasks-sort-btn {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 10px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev, var(--bg));
+  color: var(--text-dim);
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+}
+.tasks-sort-btn:focus { outline: none; }
+.tasks-sort-btn.active {
+  color: var(--text);
+  border-color: var(--running, #3b82f6);
+  background: var(--bg-elev2, var(--border));
 }
 .tasks-section { margin-bottom: 14px; }
 .tasks-heading {
@@ -5508,7 +6167,22 @@ body:has(.panes-detail) .navbar { display: none; }
   padding: 1px 6px;
 }
 .task-panes { font-size: 11px; color: var(--text-dim); }
+.task-ago { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .task-icon { font-size: 15px; }
+.task-row { cursor: pointer; }
+.task-pin {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 15px;
+  padding: 4px 2px 4px 6px;
+  min-width: 28px;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.task-pin.pinned { color: var(--warn, #d4a72c); }
+.tasks-heading.tasks-pinned { color: var(--warn, #d4a72c); }
 .tasks-noise-toggle {
   width: 100%;
   text-align: left;
@@ -5546,6 +6220,7 @@ body:has(.panes-detail) .navbar { display: none; }
 }
 .panes-detail .panes-deck { flex: 1; min-height: 0; }
 
+
 /* Panes detail header: back + status dot + current window + attention (no tab menu) */
 .panes-detail-head .task-dot { margin: 0 2px; }
 .panes-detail-attn {
@@ -5568,7 +6243,201 @@ body:has(.panes-detail) .navbar { display: none; }
 }
 .panes-tabbar .drive-back { flex: none; }
 .panes-tabbar .panes-tabs { border-bottom: none; padding: 0; flex: 1; }
-.panes-tab { display: inline-flex; align-items: center; gap: 6px; }
+/* Terminal font-size cycler in the deck tab bar + the sizes it selects */
+.panes-font-btn {
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev, var(--bg));
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 8px;
+  min-height: 30px;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+}
+.panes-font-btn:focus { outline: none; }
+.panes-font-size { font-size: 9px; margin-left: 2px; vertical-align: super; }
+.panes-deck.font-s .pane-card-screen { font-size: 10px; }
+.panes-deck.font-m .pane-card-screen { font-size: 12px; }
+.panes-deck.font-l .pane-card-screen { font-size: 14px; }
+.panes-font-btn.active { color: var(--text); border-color: var(--accent); }
+
+/* Reader mode: the parsed conversation replaces the terminal grid. Same slot as
+   .pane-card-screen (flex column child that owns the scroll). */
+.pane-card-reader {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px 5px;
+  background: var(--bg);
+  -webkit-overflow-scrolling: touch;
+  /* Keep vertical rubber-banding from leaking into the horizontal deck swipe
+     or triggering pull-to-refresh on iOS. */
+  overscroll-behavior: contain;
+}
+.pane-card-reader-more {
+  display: block;
+  width: 100%;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 8px;
+  margin: 4px 0 8px;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.pane-card-reader-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 14px 8px;
+  font-family: var(--mono, monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* The reader font scales with the same A-button as the terminal. Target the
+   .cc-compact root: it sets an absolute font-size (12px), so sizing the
+   wrapper alone never reached the text. */
+.panes-deck.font-s .pane-card-reader .cc-compact { font-size: 11px; }
+.panes-deck.font-l .pane-card-reader .cc-compact { font-size: 14px; }
+/* Phone reader: reclaim the left gutter for reading width. The ⏺ bullets are
+   decorative here (the run rows already summarize tool status), so drop them and
+   pull message text + tool results to the card edge. */
+.pane-card-reader .cc-bullet { display: none; }
+.pane-card-reader .cc-result { margin-left: 2px; }
+.pane-card-reader .cc-thinking-body { padding-left: 2px; }
+/* Tool-call header (e.g. a long `Bash(…command…)`) stays a single ellipsized
+   line on the phone reader — the command never wraps into a wall of text. Tapping
+   the tool line opens it (same gesture that reveals the output), and the full
+   command then wraps into view. */
+.pane-card-reader .cc-tool-head {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pane-card-reader .cc-tool-head.open {
+  white-space: pre-wrap;
+  overflow: visible;
+  word-break: break-word;
+}
+/* Your own inputs read as chat bubbles pinned to the RIGHT — the universal
+   "this is me" convention, and deliberately unlike the left-aligned accent
+   stripes used for notifications/callouts. Filled + fully rounded, brighter text
+   (Claude's replies stay dim). Covers typed prompts and echoed slash commands.
+   Extra specificity (…-reader .cc-focus…) beats the generic .cc-focus .cc-user. */
+.pane-card-reader .cc-focus .cc-user {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 20%, var(--bg-elev));
+  border: 1px solid var(--accent-dim);
+  border-radius: 14px;
+  padding: 7px 11px;
+  margin: 12px 0 12px auto;
+  max-width: 82%;
+  width: fit-content;
+}
+.pane-card-reader .cc-focus .cc-user .cc-prompt { display: none; }
+.pane-card-reader .cc-focus .cc-user .cc-md,
+.pane-card-reader .cc-focus .cc-user .cc-md * { color: var(--text); }
+.pane-card-reader .cc-focus .cc-user .cc-cmd-name { color: var(--accent); }
+/* The conversation container's own 10px side padding stacks on top of the card
+   + reader gutters — trim it here so the messages use the full box width. */
+.pane-card-reader .cc-compact { padding-left: 4px; padding-right: 4px; }
+/* Code sizes are absolute px elsewhere — make them track the cycler here. */
+.pane-card-reader .md pre code,
+.pane-card-reader .codeblock-body { font-size: 0.95em; }
+
+/* Wraps the scroller (terminal or reader) so the jump-to-latest pill can float
+   over it; takes over the flex sizing the scroller had as a direct child. */
+.pane-card-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pane-card-body > .pane-card-reader,
+.pane-card-body > .pane-card-screen {
+  flex: 1;
+  min-height: 0;
+}
+.pane-card-jump {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  min-height: 40px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev2);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+/* New activity landed below while scrolled up. */
+.pane-card-jump.fresh::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--running);
+}
+
+/* ====== Focus-mode density + tool-run rows (panes reader / drive) ====== */
+.cc-focus .cc-user { margin: 10px 0 6px; }
+.cc-focus .cc-line { margin: 4px 0; }
+.cc-focus .cc-result { margin-left: 10px; }
+
+/* One row standing in for a whole run of tool calls. */
+.cc-run-row {
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 12px 6px;
+  margin: 4px -6px;
+  border-radius: 6px;
+  -webkit-tap-highlight-color: transparent;
+}
+.cc-run-row:hover { background: var(--bg-elev); }
+.cc-run-row .cc-bullet { margin-right: 0; }
+.cc-run-label {
+  color: var(--text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.cc-run-counts {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+.cc-run-errors {
+  color: var(--error);
+  white-space: nowrap;
+}
+.cc-run-fold {
+  color: var(--text-dim);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+/* The current step shown under a collapsed live run. */
+.cc-run-live { margin-top: 0; }
+.panes-tab { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .tab-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-dim); }
 
 /* Pane card head right group: context meter + drive button. */
@@ -5635,4 +6504,178 @@ body:has(.panes-detail) .navbar { display: none; }
   background: var(--running, #5fd97a);
   color: #08140c;
   font-weight: 700;
+}
+/* Split "New window" launcher: primary button + ▾ caret that opens the profile menu. */
+.task-new-wrap { position: relative; display: flex; align-items: stretch; gap: 6px; margin-top: 4px; }
+.task-new-wrap .task-new { flex: 1 1 auto; width: auto; margin-top: 0; }
+.task-new-caret {
+  flex: 0 0 auto;
+  min-width: 44px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  cursor: pointer;
+}
+.task-new-caret:hover { background: var(--bg-elev2); color: var(--text); }
+.task-new-caret[aria-expanded="true"] { background: var(--bg-elev2); color: var(--text); }
+.task-new-caret:disabled { opacity: 0.6; cursor: default; }
+/* The profile menu/param-form open upward from the launcher (reuses .send-menu). */
+.task-new-wrap .send-menu { right: 0; left: 0; min-width: 0; }
+.profile-note { padding: 8px 10px; color: var(--text-dim); font-size: 13px; }
+.profile-note-error { color: var(--danger, #e06c75); white-space: pre-wrap; }
+.profile-field { display: block; padding: 6px 10px; }
+.profile-field-label { display: block; color: var(--text-dim); font-size: 12px; margin-bottom: 4px; }
+.profile-field-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev2);
+  color: var(--text);
+  font: inherit;
+}
+.profile-launch { color: var(--running, #5fd97a); }
+/* Remove-session confirm dialog (centered modal; used from the list row + deck header). */
+.remove-scrim { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.5); }
+.remove-dialog {
+  position: fixed;
+  z-index: 51;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(440px, calc(100vw - 24px));
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  padding: 16px;
+}
+.remove-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.remove-body { color: var(--text-dim); font-size: 13px; margin-bottom: 12px; }
+.remove-cleanup {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.remove-cleanup input { margin-top: 2px; width: 16px; height: 16px; flex: 0 0 auto; }
+.remove-cleanup code {
+  word-break: break-all;
+  font-size: 12px;
+  color: var(--text);
+}
+.remove-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.remove-cancel, .remove-confirm {
+  min-height: 40px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.remove-cancel { background: var(--bg-elev); color: var(--text); }
+.remove-confirm { background: var(--danger, #e06c75); border-color: var(--danger, #e06c75); color: #fff; }
+/* Session-restore banner (top of the task list) + its review modal. */
+.restore-banner {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent, #3b82f6);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent);
+  color: var(--text);
+  font-size: 14px;
+}
+.restore-banner-msg { flex: 1 1 auto; min-width: 0; font-weight: 600; }
+.restore-banner-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.restore-review, .restore-dismiss {
+  min-height: 36px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.restore-review { border-color: var(--accent, #3b82f6); color: var(--accent, #3b82f6); font-weight: 600; }
+.restore-dismiss { color: var(--text-dim); }
+.restore-modal { min-width: 260px; }
+.restore-group {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  grid-template-areas: "check name count" "check wins wins";
+  column-gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.restore-group:hover { background: var(--bg-elev2); }
+.restore-group input { grid-area: check; width: 16px; height: 16px; }
+.restore-group-name { grid-area: name; font-weight: 600; }
+.restore-group-count {
+  grid-area: count;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-elev2);
+}
+.restore-group-wins {
+  grid-area: wins;
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.restore-note { padding: 6px 10px; color: var(--text-dim); font-size: 12px; }
+.restore-go { color: var(--accent, #3b82f6); }
+@media (max-width: 819px) {
+  .restore-banner .send-menu {
+    position: fixed;
+    left: 50%;
+    right: auto;
+    top: max(16px, env(safe-area-inset-top));
+    bottom: auto;
+    transform: translateX(-50%);
+    width: min(420px, calc(100vw - 24px));
+    max-height: min(80vh, 520px);
+    overflow-y: auto;
+  }
+  .restore-banner .send-menu-scrim { background: rgba(0, 0, 0, 0.45); }
+}
+/* Mobile: the launcher sits at the bottom of the task list, so anchoring the menu/form
+   above it pushes content off-screen (and the keyboard covers the form) with the scrim
+   blocking any scroll. Instead present it as a top-anchored, scrollable modal that stays
+   fully on-screen and clears the on-screen keyboard. */
+@media (max-width: 819px) {
+  .task-new-wrap .send-menu {
+    position: fixed;
+    left: 50%;
+    right: auto;
+    top: max(16px, env(safe-area-inset-top));
+    bottom: auto;
+    transform: translateX(-50%);
+    width: min(420px, calc(100vw - 24px));
+    max-height: min(70vh, 480px);
+    overflow-y: auto;
+  }
+  .task-new-wrap .send-menu-scrim { background: rgba(0, 0, 0, 0.45); }
 }
