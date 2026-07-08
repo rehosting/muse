@@ -774,6 +774,7 @@ export interface TmuxPane {
   pane_id: string;
   session_name: string;
   window_index: number;
+  window_id: string; // stable window handle (@<n>) — the target for move-window
   window_name: string;
   window_active: boolean;
   pane_index: number;
@@ -782,12 +783,23 @@ export interface TmuxPane {
   cwd: string;
   title: string;
   session_attached: boolean;
+  last_activity: number;
   muse_session_id: string | null;
   context_pct: number | null;
+  queued: number;
   status: "needs_you" | "responded" | "working" | "idle";
   attention: string;
   mode: "default" | "acceptEdits" | "plan" | "bypass" | null;
-  preview: string;
+  preview: string; // full visible screen (ANSI); empty when polled with previews=0
+  preview_tail: string; // last visible line — task-list subtitle
+  options: PendingOption[];
+}
+
+/** One pane's live visible screen (from /api/tmux/panes/{id}/screen). */
+export interface PaneScreen {
+  ok: boolean;
+  text: string;
+  mode: "default" | "acceptEdits" | "plan" | "bypass" | null;
   options: PendingOption[];
 }
 
@@ -795,6 +807,114 @@ export interface TmuxLayout {
   available: boolean;
   panes: TmuxPane[];
   reason: string | null;
+}
+
+export interface SlashCommand {
+  name: string; // invoked as "/{name}"; subdir commands are namespaced with ":"
+  description: string;
+  source: "builtin" | "user" | "project";
+}
+
+/** A declared input a launch profile prompts for before running (substituted as {key}). */
+export interface ProfileParam {
+  key: string;
+  prompt: string;
+  default: string;
+}
+
+/** A launch profile from ~/.muse/profiles.toml: a template for opening a new window. */
+export interface Profile {
+  name: string;
+  cwd: string;
+  command: string;
+  params: ProfileParam[];
+  builtin: boolean; // the always-present "Claude" default
+}
+
+/** One window in a saved layout snapshot (for session-restore after a reboot). */
+export interface SnapshotWindow {
+  window_name: string;
+  cwd: string;
+  command: string;
+  kind: "claude" | "shell";
+  session_id: string | null; // resumable Claude id, when captured
+  live: boolean; // already running in the current tmux (skipped on restore)
+}
+
+export interface SnapshotGroup {
+  name: string;
+  windows: SnapshotWindow[];
+}
+
+/** The latest tmux topology snapshot, annotated for the restore UI. */
+export interface LayoutSnapshot {
+  ts: string | null; // null when nothing captured yet
+  groups: SnapshotGroup[];
+  offer: boolean; // post-reboot signal: has Claude windows, none currently live
+  restorable_count: number;
+}
+
+/** A message queued for delivery when its session's turn ends. */
+export interface QueuedReply {
+  id: number;
+  session_id: string;
+  text: string;
+  created_at: string | null;
+  status: "pending" | "sent" | "cancelled" | "failed";
+  /** turn = deliver alone (own turn); append = glue onto the previous item. */
+  mode: "turn" | "append";
+  sent_at: string | null;
+  error: string | null;
+}
+
+export interface QueueView {
+  items: QueuedReply[];
+  /** Why the pending queue isn't delivering right now (null = would deliver). */
+  hold_reason: string | null;
+}
+
+export interface RunwaySession {
+  session_id: string;
+  title: string;
+  cost_usd: number;
+}
+
+export interface RunwayWindow {
+  label: string;
+  window_seconds: number;
+  anchor: string | null;
+  anchor_source: string; // "reset" when anchored to an observed usage-limit reset
+  elapsed_seconds: number;
+  remaining_seconds: number;
+  cost_usd: number;
+  budget_usd: number | null;
+  budget_source: "configured" | "observed" | "none";
+  pct_used: number | null;
+  pct_elapsed: number;
+}
+
+/** Budget headroom before the plan's 5h/weekly limits bite. */
+export interface RunwayResponse {
+  generated_at: string;
+  plan_label: string | null;
+  five_hour: RunwayWindow;
+  week: RunwayWindow;
+  burn_usd_per_hour: number;
+  projected_exhaust_at: string | null;
+  exhaust_before_reset: boolean;
+  top_sessions: RunwaySession[];
+}
+
+/** Claude Code hook relay install/ingest state. */
+export interface HooksStatus {
+  script_exists: boolean;
+  endpoint_file_exists: boolean;
+  installed_events: string[];
+  expected_events: string[];
+  events_seen: number;
+  by_event: Record<string, number>;
+  last_event_at: string | null;
+  recent: { ts: string; event: string; session_id: string; message: string }[];
 }
 
 export interface PendingOptions {

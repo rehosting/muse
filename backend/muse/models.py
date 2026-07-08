@@ -642,6 +642,7 @@ class TmuxPane(BaseModel):
     pane_id: str
     session_name: str
     window_index: int
+    window_id: str = ""  # stable window handle (@<n>) — the target for move-window
     window_name: str
     window_active: bool
     pane_index: int
@@ -650,15 +651,21 @@ class TmuxPane(BaseModel):
     cwd: str
     title: str = ""
     session_attached: bool = True  # False => detached session (scratch/background)
+    last_activity: int = 0  # epoch secs of last window activity (most-recent sort)
     muse_session_id: Optional[str] = None  # set if this pane runs a tracked session
     context_pct: Optional[float] = None  # context-window occupancy (tracked sessions)
+    queued: int = 0  # replies queued for delivery when this session's turn ends
     # Attention status for grouping the mobile task list.
     # responded = a live session whose turn ended (a response is ready for you).
     status: Literal["needs_you", "responded", "working", "idle"] = "idle"
     attention: str = ""  # short reason, e.g. "permission prompt", "working"
     # Claude Code's permission mode (Shift+Tab cycles it); None for non-Claude panes.
     mode: Optional[Literal["default", "acceptEdits", "plan", "bypass"]] = None
-    preview: str = ""  # recent captured lines (plain text)
+    # Full screen text is heavy (hundreds of KB across a fleet) — it ships only
+    # when the client asks (?previews=1); the one-line tail always ships for
+    # task-list subtitles. The deck fetches live screens per-pane instead.
+    preview: str = ""  # visible screen (ANSI), only when previews=1
+    preview_tail: str = ""  # last visible line (ANSI stripped, short)
     options: list[PendingOption] = Field(default_factory=list)  # menu detected in buffer
 
 
@@ -666,6 +673,78 @@ class TmuxLayout(BaseModel):
     available: bool = True  # False when tmux isn't installed/running
     panes: list[TmuxPane] = Field(default_factory=list)
     reason: Optional[str] = None
+
+
+class SlashCommand(BaseModel):
+    """One entry in the composer's "/" autocomplete: a Claude Code slash command
+    available to the pane's session (built-in, user-global, or project-local)."""
+
+    name: str  # invoked as "/{name}" — subdir commands are namespaced with ":"
+    description: str = ""
+    source: Literal["builtin", "user", "project"] = "builtin"
+
+
+class QueuedReply(BaseModel):
+    """A user-authored message waiting to be typed into a session's pane the next
+    time that session is genuinely idle (turn ended, no menu pending)."""
+
+    id: int
+    session_id: str
+    text: str
+    created_at: Optional[datetime] = None
+    status: Literal["pending", "sent", "cancelled", "failed"] = "pending"
+    # turn = deliver alone and let it run a full turn; append = glue onto the
+    # previous queued item so both go in one message.
+    mode: Literal["turn", "append"] = "turn"
+    sent_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class QueueView(BaseModel):
+    """A session's queue plus why it isn't delivering right now (so the UI can
+    explain a held reply instead of leaving it silently pending)."""
+
+    items: list[QueuedReply] = []
+    hold_reason: Optional[str] = None
+
+
+class RunwaySession(BaseModel):
+    session_id: str
+    title: str = ""
+    cost_usd: float = 0.0
+
+
+class RunwayWindow(BaseModel):
+    """Spend vs budget for one rate-limit window (5h or weekly)."""
+
+    label: str
+    window_seconds: int
+    anchor: Optional[datetime] = None  # window start
+    anchor_source: str = "estimated"  # "reset" when anchored to an observed reset
+    elapsed_seconds: int = 0
+    remaining_seconds: int = 0
+    cost_usd: float = 0.0
+    budget_usd: Optional[float] = None
+    # Where the budget came from: "configured" (MUSE_LIMIT_*_USD), "observed"
+    # (spend at the last real limit hit), or "none" (subscription plan with no
+    # calibration yet — show spend without a ceiling, never a made-up estimate).
+    budget_source: str = "none"
+    pct_used: Optional[float] = None  # cost/budget, None without a budget
+    pct_elapsed: float = 0.0  # time progress through the window
+
+
+class RunwayResponse(BaseModel):
+    """How much headroom is left before hitting the plan's usage limits — the
+    fleet-driving question ('can I keep all these sessions running?')."""
+
+    generated_at: datetime
+    plan_label: Optional[str] = None
+    five_hour: RunwayWindow
+    week: RunwayWindow
+    burn_usd_per_hour: float = 0.0  # trailing burn rate (last 30 min, annualized to 1h)
+    projected_exhaust_at: Optional[datetime] = None  # when the 5h budget runs out at this burn
+    exhaust_before_reset: bool = False  # True => you'll hit the limit before the window resets
+    top_sessions: list[RunwaySession] = Field(default_factory=list)  # burners this 5h window
 
 
 class Bookmark(BaseModel):
