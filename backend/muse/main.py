@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db, lifecycle
+from . import db, hooksetup, lifecycle
 from .auth import AuthMiddleware
 from .compression import GzipBufferedMiddleware
 from .config import get_settings
@@ -87,6 +87,15 @@ async def lifespan(app: FastAPI):
     app.state.autopilot.start()
     app.state.alerts = AlertsWatcher(app.state.service)
     app.state.alerts.start()
+    # Claude Code hook ingestion: refresh the relay's endpoint file (port+token
+    # can change between runs) and prime the recent-events ring.
+    try:
+        hooksetup.write_endpoint_file()
+    except OSError:
+        pass
+    from collections import deque as _deque
+
+    app.state.hook_events = _deque(maxlen=200)
     # AI worker: single daemon thread executing headless `claude -p` jobs.
     get_settings().ai_workdir.mkdir(parents=True, exist_ok=True)
     app.state.service.ai_worker.start()
