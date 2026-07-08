@@ -12,6 +12,7 @@ import type { ThreadItem, ToolUse } from "../api/types";
 import { summarize } from "./renderers";
 import { classifyUser, toolArg, toolBody, toolTitle } from "./ccInline";
 import { toolStatus } from "../util/toolIndex";
+import { computeToolRuns, type ToolRun } from "../util/toolRuns";
 import Markdown from "./Markdown";
 import BookmarkControl from "./BookmarkControl";
 import WelcomeBanner from "./WelcomeBanner";
@@ -86,6 +87,9 @@ const VIRT_THRESHOLD = 200;
 const OVERSCAN = 1500;
 // Height assumed for a not-yet-measured row (only affects the scrollbar estimate).
 const EST_HEIGHT = 72;
+
+// Shared empty map so non-focus renders never allocate (or regroup).
+const EMPTY_RUNS = new Map<string, ToolRun>();
 
 /** All searchable text for an item (assistant/user text, tool args + results). */
 function itemText(item: ThreadItem): string {
@@ -428,6 +432,24 @@ function ConversationView(
   const matchSet = new Set(matches);
   const currentUuid = matches.length ? matches[Math.min(current, matches.length - 1)] : null;
 
+  // Focus mode: fold runs of consecutive tool-only items into one row each.
+  // Memo keyed on items identity — the reader hook only swaps items on real
+  // updates, so this doesn't recompute on no-op polls. Open state is keyed by
+  // the run's first-member uuid, which appends never change.
+  const runs = useMemo(
+    () => (focus ? computeToolRuns(items) : EMPTY_RUNS),
+    [focus, items],
+  );
+  const [openRuns, setOpenRuns] = useState<Set<string>>(() => new Set());
+  const toggleRun = useCallback((key: string) => {
+    setOpenRuns((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   const renderItem = (item: ThreadItem, i: number) => (
     <div
       key={item.uuid}
@@ -463,7 +485,51 @@ function ConversationView(
 
   let body: React.ReactNode;
   if (!active) {
-    body = items.map((item, i) => renderItem(item, i));
+    if (runs.size > 0) {
+      // Grouped render (focus only): a run's first member renders the fold row;
+      // the members render only while the run is open. A collapsed run at the
+      // LIVE TAIL still shows its newest call, so a working session's current
+      // step stays visible. Search matches force the run open so results
+      // aren't invisible. Item keys/refs are untouched — renderItem as-is.
+      const lastUuid = items[items.length - 1]?.uuid;
+      const nodes: React.ReactNode[] = [];
+      items.forEach((item, i) => {
+        const run = runs.get(item.uuid);
+        if (!run) {
+          nodes.push(renderItem(item, i));
+          return;
+        }
+        const open =
+          openRuns.has(run.key) || (q !== "" && [...run.memberUuids].some((u) => matchSet.has(u)));
+        if (item.uuid === run.firstUuid) {
+          nodes.push(
+            <ToolRunRow
+              key={`run:${run.key}`}
+              run={run}
+              open={open}
+              onToggle={() => toggleRun(run.key)}
+            />,
+          );
+          if (!open && lastUuid !== undefined && run.memberUuids.has(lastUuid) && run.lastTool) {
+            nodes.push(
+              <div key={`run-live:${run.key}`} className="cc-assistant cc-run-live">
+                <ToolLine
+                  tool={run.lastTool}
+                  selected={selectedToolId === run.lastTool.id}
+                  onSelect={() => onSelectTool(run.lastTool!.id, "conversation")}
+                  registerRef={registerToolRef}
+                  focus={focus}
+                />
+              </div>,
+            );
+          }
+        }
+        if (open) nodes.push(renderItem(item, i));
+      });
+      body = nodes;
+    } else {
+      body = items.map((item, i) => renderItem(item, i));
+    }
   } else {
     rebuildCum(); // authoritative offsets from the latest measured heights
     const c = cum.current;
@@ -481,7 +547,7 @@ function ConversationView(
   }
 
   return (
-    <div className={`cc${compact ? " cc-compact" : ""}`} ref={rootRef}>
+    <div className={`cc${compact ? " cc-compact" : ""}${focus ? " cc-focus" : ""}`} ref={rootRef}>
       {!compact && (
       <div className="cc-search">
         <input
@@ -654,6 +720,54 @@ function ConversationItem({
   );
 }
 
+// How many distinct tools the collapsed row lists before eliding.
+const RUN_COUNTS_SHOWN = 4;
+
+// Max result lines a collapsed tool shows in focus (phone) mode before "show more".
+const FOCUS_RESULT_LINES = 3;
+
+/** One tap-to-unfold row standing in for a whole run of tool calls (focus
+ * mode). Open, it becomes the fold header above the expanded members. */
+function ToolRunRow({
+  run,
+  open,
+  onToggle,
+}: {
+  run: ToolRun;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const status = run.errors > 0 ? "error" : run.running ? "pending" : "ok";
+  const shown = run.counts.slice(0, RUN_COUNTS_SHOWN);
+  const elided = run.counts.length - shown.length;
+  return (
+    <div
+      className={`cc-line cc-run-row${open ? " open" : ""}`}
+      role="button"
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onToggle();
+      }}
+    >
+      <span className={`cc-bullet status-${status}`}>{open ? "▾" : "⚒"}</span>
+      <span className="cc-run-label">
+        {run.calls} steps{run.running && !open ? "…" : ""}
+      </span>
+      <span className="cc-run-counts">
+        {shown.map((c) => (c.n > 1 ? `${c.name} ×${c.n}` : c.name)).join("  ") +
+          (elided > 0 ? `  +${elided} more` : "")}
+      </span>
+      {run.errors > 0 && (
+        <span className="cc-run-errors">
+          {run.errors} error{run.errors === 1 ? "" : "s"}
+        </span>
+      )}
+      {open && <span className="cc-run-fold">tap to fold</span>}
+    </div>
+  );
+}
+
 function ToolLine({
   tool,
   selected,
@@ -682,7 +796,7 @@ function ToolLine({
         onSelect();
       }}
     >
-      <div>
+      <div className={`cc-tool-head${expanded ? " open" : ""}`}>
         <span className={`cc-bullet status-${status}`}>⏺</span>
         <span className="cc-tool-name">{toolTitle(tool.name)}</span>
         {arg && <span className="cc-tool-arg">({arg})</span>}
@@ -713,13 +827,16 @@ function ResultConnector({
     );
   }
   const { rows, limit } = toolBody(tool);
-  // Focus mode (phone): collapse the whole result to a single tap-to-expand line
-  // unless the user opened it — keeps the conversation readable on a small screen.
-  const effectiveLimit = focus && !expanded ? 0 : limit;
+  // Focus mode (phone): show at most a few lines of the result unless expanded, so
+  // a long tool output never dominates the small screen. The cap is format-aware —
+  // it never exceeds the tool's own preview limit (Read is 1 line, Bash up to 8…),
+  // so terse results stay terse and only verbose ones get clamped to FOCUS_RESULT_LINES.
+  const clamped = focus && !expanded;
+  const effectiveLimit = clamped ? Math.min(limit, FOCUS_RESULT_LINES) : limit;
   const shown = expanded ? rows : rows.slice(0, effectiveLimit);
   const hidden = rows.length - shown.length;
   return (
-    <div className="cc-result">
+    <div className={`cc-result${clamped ? " cc-result-clamped" : ""}`}>
       <span className="cc-connector">⎿</span>
       <div className="cc-result-body">
         {shown.map((r, i) => (

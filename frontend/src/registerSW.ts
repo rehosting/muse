@@ -9,6 +9,61 @@ export function registerSW(): void {
       /* registration failures are non-fatal — the app still works online */
     });
   });
+  watchForNewBuild();
+}
+
+/** Notice when a new build is deployed and OFFER to load it — never reload on
+ * our own. A standalone PWA that's merely foregrounded never NAVIGATES, so the
+ * service worker's network-first shell fetch doesn't run and the old bundle can
+ * linger. But force-reloading on focus destroys whatever the user was typing, so
+ * instead we show a dismissible "Update" pill; tapping it reloads when the user
+ * is ready. Whenever the app regains focus (and every few minutes) we compare
+ * the live index.html's hashed entry script to the one we booted with. */
+function watchForNewBuild(): void {
+  const running = document
+    .querySelector<HTMLScriptElement>('script[src*="/assets/index-"]')
+    ?.getAttribute("src")
+    ?.match(/index-[\w-]+\.js/)?.[0];
+  if (!running) return;
+  let checking = false;
+  let offered = false;
+  const check = async () => {
+    if (checking || offered || document.hidden) return;
+    checking = true;
+    try {
+      // Cache-bust the query so even a stale service worker (which serves "/"
+      // cache-first for non-navigation fetches) is forced to the network — else
+      // we'd compare against a frozen shell and cry "new version" forever.
+      const res = await fetch(`/?_=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const html = await res.text();
+      const live = html.match(/index-[\w-]+\.js/)?.[0];
+      if (live && live !== running) {
+        offered = true;
+        showUpdatePill();
+      }
+    } catch {
+      /* offline — try again later */
+    } finally {
+      checking = false;
+    }
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) check();
+  });
+  window.setInterval(check, 5 * 60 * 1000);
+}
+
+/** A tap-to-reload pill, injected once. Deliberately NOT auto-dismissing and NOT
+ * auto-reloading — the user reloads on their terms so in-progress input survives. */
+function showUpdatePill(): void {
+  if (document.getElementById("muse-update-pill")) return;
+  const btn = document.createElement("button");
+  btn.id = "muse-update-pill";
+  btn.className = "muse-update-pill";
+  btn.textContent = "↻ New version — tap to update";
+  btn.addEventListener("click", () => window.location.reload());
+  document.body.appendChild(btn);
 }
 
 function urlBase64ToUint8Array(base64: string): BufferSource {

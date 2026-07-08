@@ -6,6 +6,7 @@ import AiActionButton from "../components/AiActionButton";
 import ConversationView from "../components/ConversationView";
 import LiveBadge from "../components/LiveBadge";
 import OptionPicker from "../components/OptionPicker";
+import QueueChips from "../components/board/QueueChips";
 import ReplyBox from "../components/board/ReplyBox";
 import { useSessionStream } from "../hooks/useSessionStream";
 import { usePendingOptions } from "../hooks/usePendingOptions";
@@ -31,6 +32,7 @@ export default function DrivePage() {
   const { pending, sending, select } = usePendingOptions(sessionId);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [draft, setDraft] = useState(""); // prefills the composer (top suggestion)
+  const [queueBump, setQueueBump] = useState(0); // refresh QueueChips right after queueing
   const suggested = useRef(false);
 
   // Enqueue suggest_replies, poll the job, prefill the composer with the top one and
@@ -155,6 +157,8 @@ export default function DrivePage() {
 
         {pending && <OptionPicker pending={pending} sending={sending} onSelect={select} />}
 
+        <QueueChips sessionId={sessionId} refreshKey={queueBump} />
+
         {suggestions.length > 1 && (
           <div className="option-chips drive-suggestions">
             {suggestions.slice(1).map((s, i) => (
@@ -171,7 +175,14 @@ export default function DrivePage() {
         )}
 
         <div className="drive-composer-row">
-          <ReplyBox sessionId={sessionId} hasPane busy={live} variant="cockpit" draft={draft} />
+          <ReplyBox
+            sessionId={sessionId}
+            hasPane
+            busy={live}
+            variant="cockpit"
+            draft={draft}
+            onQueued={() => setQueueBump((n) => n + 1)}
+          />
           <AiActionButton
             label="✦"
             className="action-btn drive-suggest-btn"

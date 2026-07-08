@@ -1,0 +1,21 @@
+# muse launch profiles — copy to ~/.muse/profiles.toml (or set MUSE_PROFILES_PATH).
+#
+# Each [[profile]] is a template for "New window" on the /panes page:
+#   name    — shown in the launcher menu (must be unique; avoid "/")
+#   cwd     — working directory the window starts in (default: "~")
+#   command — shell string run in the new window (default: "claude")
+#   params  — optional inputs muse prompts for and substitutes as {key}
+#
+# A built-in "Claude" profile (cwd ~, command claude) always exists; define your own
+# "Claude" here to override it. Command params are shell-quoted; cwd params are literal.
+
+[[profile]]
+name    = "igloo dev"
+cwd     = "~/workspace/igloo-dev"
+command = "./dev.sh {issue} && claude"
+params  = [{ key = "issue", prompt = "Issue name", default = "" }]
+
+[[profile]]
+name    = "web"
+cwd     = "~/workspace/web"
+command = "npm run dev & claude"
