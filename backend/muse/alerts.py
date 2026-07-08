@@ -18,7 +18,10 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from types import SimpleNamespace
+
 from . import db
+from .autopilot import sessions as live_discovery
 from .incremental import new_objects
 from .models import AlertEvent
 from .paths import SessionPaths
@@ -28,6 +31,14 @@ from .paths import SessionPaths
 _CHECKPOINT_INTERVAL = 60.0
 _USAGE_WARM_INTERVAL = 60.0  # mtime-cached, so warm calls only parse changed files
 _AI_SCHEDULE_INTERVAL = 900.0  # auto-digest check cadence (opt-in via MUSE_AI_AUTO_DIGEST)
+
+# Hook-driven alerts (see routers/hooks.py). A Stop hook fires at the end of
+# EVERY turn — including rapid back-and-forth at the keyboard — so the alert
+# waits this long and re-checks the session is still idle before pushing.
+_TURN_END_SETTLE_SECONDS = 6.0
+# After a hook-driven alert, suppress the polling tick's duplicate for this long
+# (the tick reads a TTL-cached snapshot and would re-fire on the same transition).
+_HOOK_SUPPRESS_SECONDS = 90.0
 
 
 def _scan_errors(objs: list[dict]) -> list[str]:
@@ -66,6 +77,11 @@ class AlertsWatcher:
         self._last_checkpoint = 0.0
         self._last_usage_warm = 0.0
         self._last_ai_schedule = 0.0
+        # Hook-driven alert state: tick-suppression windows + a per-session
+        # generation counter that cancels an in-flight turn-ended alert when the
+        # user replies (or another Stop supersedes it).
+        self._suppress: dict[tuple[str, str], float] = {}
+        self._turn_gen: dict[str, int] = {}
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -184,9 +200,9 @@ class AlertsWatcher:
             self._states[sid] = s.state
             if first or prev is None or prev == s.state:
                 continue
-            if s.state == "waiting" and rules.on_waiting:
+            if s.state == "waiting" and rules.on_waiting and not self._suppressed(sid, "waiting"):
                 await self._fire(cfg, rules, s, "waiting", f"✋ {s.title} is waiting for you", "")
-            elif s.state == "stopped" and rules.on_stopped:
+            elif s.state == "stopped" and rules.on_stopped and not self._suppressed(sid, "stopped"):
                 await self._fire(cfg, rules, s, "stopped", f"⏹ {s.title} stopped", "")
 
         # Forget sessions that disappeared.
@@ -196,6 +212,89 @@ class AlertsWatcher:
                 self._offsets.pop(sid, None)
 
         self._primed = True
+
+    # --- hook-driven alerts ---------------------------------------------------
+    # Claude Code hooks (routers/hooks.py) call these on the event loop for
+    # instant notifications; the polling tick above stays as the fallback for
+    # sessions without hooks installed. Each hook alert marks the session state
+    # and opens a suppression window so the tick can't double-fire.
+
+    def _suppressed(self, sid: str, kind: str) -> bool:
+        return time.monotonic() < self._suppress.get((sid, kind), 0.0)
+
+    def _mark_hook_alert(self, sid: str, kind: str, state: str) -> None:
+        self._states[sid] = state
+        self._suppress[(sid, kind)] = time.monotonic() + _HOOK_SUPPRESS_SECONDS
+
+    def _summary_for(self, sid: str):
+        try:
+            for s in self.service.list_sessions():
+                if s.session_id == sid:
+                    return s
+        except Exception:
+            pass
+        return SimpleNamespace(session_id=sid, title=sid[:8])
+
+    def hook_user_replied(self, sid: str) -> None:
+        """UserPromptSubmit: the user answered — cancel any in-flight turn-ended
+        alert and clear the waiting state instantly."""
+        self._turn_gen[sid] = self._turn_gen.get(sid, 0) + 1
+        if self._states.get(sid) == "waiting":
+            self._states[sid] = "running"
+
+    async def hook_needs_you(self, sid: str, message: str) -> None:
+        """Notification hook: Claude needs permission (or sat idle). Always
+        actionable — push immediately."""
+        rules = self.service.get_alert_rules()
+        if not rules.on_waiting:
+            return
+        if self._states.get(sid) == "waiting" and self._suppressed(sid, "waiting"):
+            return  # already alerted for this pause
+        s = self._summary_for(sid)
+        self._mark_hook_alert(sid, "waiting", "waiting")
+        await self._fire(
+            self.service.get_notify_config(), rules, s,
+            "waiting", f"✋ {s.title} needs you", message[:140],
+        )
+
+    async def hook_turn_ended(self, sid: str) -> None:
+        """Stop hook (with nothing queued to deliver): the turn ended. Wait a
+        settle period, then push only if the session is still idle — so rapid
+        at-the-keyboard back-and-forth doesn't spam the phone."""
+        rules = self.service.get_alert_rules()
+        if not rules.on_waiting:
+            return
+        gen = self._turn_gen.get(sid, 0) + 1
+        self._turn_gen[sid] = gen
+        await asyncio.sleep(_TURN_END_SETTLE_SECONDS)
+        if self._turn_gen.get(sid) != gen:
+            return  # user replied (or a newer turn superseded this one)
+        if self._states.get(sid) == "waiting" and self._suppressed(sid, "waiting"):
+            return
+        ls = await asyncio.to_thread(
+            lambda: next((x for x in live_discovery.discover() if x.session_id == sid), None)
+        )
+        # Unknown to live discovery (headless/one-off run) → not ours to alert on;
+        # moved on / blocked on a permission → Notification or the tick covers it.
+        if ls is None or ls.status != "idle" or ls.waiting_for:
+            return
+        s = self._summary_for(sid)
+        self._mark_hook_alert(sid, "waiting", "waiting")
+        await self._fire(
+            self.service.get_notify_config(), rules, s,
+            "waiting", f"✋ {s.title} is ready for you", "",
+        )
+
+    async def hook_session_end(self, sid: str) -> None:
+        rules = self.service.get_alert_rules()
+        if not rules.on_stopped or self._states.get(sid) == "stopped":
+            return
+        s = self._summary_for(sid)
+        self._mark_hook_alert(sid, "stopped", "stopped")
+        await self._fire(
+            self.service.get_notify_config(), rules, s,
+            "stopped", f"⏹ {s.title} ended", "",
+        )
 
     def _schedule_ai_digests(self) -> None:
         """Enqueue yesterday's daily digest (and, on Mondays, last week's retro)

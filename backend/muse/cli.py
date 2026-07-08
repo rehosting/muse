@@ -170,12 +170,36 @@ def _status() -> int:
     return 0
 
 
+def _hooks(action: str) -> int:
+    from . import hooksetup
+
+    if action == "install":
+        print(hooksetup.install())
+        return 0
+    if action == "uninstall":
+        print(hooksetup.uninstall())
+        return 0
+    st = hooksetup.status()
+    missing = [e for e in st["expected_events"] if e not in st["installed_events"]]
+    print(f"relay script:   {'ok' if st['script_exists'] else 'MISSING'} ({hooksetup.script_path()})")
+    print(f"endpoint file:  {'ok' if st['endpoint_file_exists'] else 'MISSING (written at muse start)'}")
+    print(f"settings.json:  {', '.join(st['installed_events']) or 'no muse hooks'}"
+          + (f"  (missing: {', '.join(missing)})" if missing else ""))
+    return 0 if (st["script_exists"] and not missing) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="muse", description="Manage the muse server.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     for name in ("start", "stop", "restart", "status"):
         sub.add_parser(name)
+    hooks = sub.add_parser(
+        "hooks", help="install/uninstall the Claude Code hook relay (instant session events)"
+    )
+    hooks.add_argument("action", choices=["install", "uninstall", "status"])
     args = parser.parse_args(argv)
+    if args.cmd == "hooks":
+        return _hooks(args.action)
     return {"start": _start, "stop": _stop, "restart": _restart, "status": _status}[args.cmd]()
 
 
