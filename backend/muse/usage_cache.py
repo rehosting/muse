@@ -143,21 +143,33 @@ def _agent_type(sub_path: Path) -> str:
     return at
 
 
+def _window_for_peak(peak: int) -> int:
+    """Context window inferred from the largest single-request prompt seen for a
+    model: any prompt over 200k proves the 1M-token window is in use (you can't
+    send 250k tokens to a 200k model), so that model runs on 1M."""
+    return 1_000_000 if peak > 200_000 else 200_000
+
+
 def context_pcts(scan: Scan) -> dict[str, float]:
     """Latest main-thread context size as a % of the model window, per session.
+    The window is decided PER MODEL (not per session): the largest prompt any
+    session sent to a given model tells us that model's window, so a session that
+    simply hasn't crossed 200k yet is still measured against the right window
+    instead of reading ~5x too high against an assumed 200k.
     (Lifted out of AutopilotController so the board ticker shares it.)"""
-    latest: dict[str, tuple[datetime, int]] = {}
-    peak: dict[str, int] = {}
+    latest: dict[str, tuple[datetime, int, str]] = {}
+    model_peak: dict[str, int] = {}
     for e in scan.events:
         if e.is_subagent or e.ts is None or e.context <= 0:
             continue
         cur = latest.get(e.sid)
         if cur is None or e.ts > cur[0]:
-            latest[e.sid] = (e.ts, e.context)
-        peak[e.sid] = max(peak.get(e.sid, 0), e.context)
+            latest[e.sid] = (e.ts, e.context, e.model or "")
+        m = e.model or ""
+        model_peak[m] = max(model_peak.get(m, 0), e.context)
     out = {}
-    for sid, (_ts, ctx) in latest.items():
-        window = 1_000_000 if peak[sid] > 200_000 else 200_000
+    for sid, (_ts, ctx, model) in latest.items():
+        window = _window_for_peak(model_peak.get(model, 0))
         out[sid] = 100.0 * ctx / window
     return out
 
@@ -186,15 +198,16 @@ def _file_aggregate(path: Path, events: list[Event]) -> tuple:
     cost = 0.0
     latest_ts = None
     latest_ctx = 0
+    latest_model = ""
     peak_ctx = 0
     for e in events:
         tokens += e.input + e.output + e.cc  # real work (excl. cache reads)
         cost += cost_usd(e.model, e.input, e.output, e.cc, e.cr)
         if not e.is_subagent and e.ts is not None and e.context > 0:
             if latest_ts is None or e.ts > latest_ts:
-                latest_ts, latest_ctx = e.ts, e.context
+                latest_ts, latest_ctx, latest_model = e.ts, e.context, e.model or ""
             peak_ctx = max(peak_ctx, e.context)
-    agg = (mtime, sid, tokens, cost, latest_ts, latest_ctx, peak_ctx)
+    agg = (mtime, sid, tokens, cost, latest_ts, latest_ctx, peak_ctx, latest_model)
     _file_agg_cache[path] = agg
     return agg
 
@@ -204,7 +217,7 @@ def board_rollup() -> tuple[dict[str, tuple[int, float]], dict[str, float]]:
     O(#files) per call thanks to the per-file mtime-keyed aggregate cache."""
     projects = get_settings().projects_dir
     aggs: dict[str, tuple[int, float]] = {}
-    latest: dict[str, tuple] = {}  # sid -> (ts, ctx)
+    latest: dict[str, tuple] = {}  # sid -> (ts, ctx, model)
     peak: dict[str, int] = {}
     if not projects.is_dir():
         return aggs, {}
@@ -216,7 +229,7 @@ def board_rollup() -> tuple[dict[str, tuple[int, float]], dict[str, float]]:
         if a[4] is not None:
             cur = latest.get(sid)
             if cur is None or a[4] > cur[0]:
-                latest[sid] = (a[4], a[5])
+                latest[sid] = (a[4], a[5], a[7])
             peak[sid] = max(peak.get(sid, 0), a[6])
 
     for project_dir in projects.iterdir():
@@ -228,10 +241,14 @@ def board_rollup() -> tuple[dict[str, tuple[int, float]], dict[str, float]]:
             feed(sub, sub.parent.parent.name, project_dir.name, True,
                  _agent_type(sub), sub.stem)
 
+    # Window per MODEL: the biggest prompt any session sent to a model reveals
+    # that model's window, so low-usage sessions aren't measured against 200k.
+    model_peak: dict[str, int] = {}
+    for sid, (_ts, _ctx, model) in latest.items():
+        model_peak[model] = max(model_peak.get(model, 0), peak.get(sid, 0))
     pcts = {}
-    for sid, (_ts, ctx) in latest.items():
-        window = 1_000_000 if peak.get(sid, 0) > 200_000 else 200_000
-        pcts[sid] = 100.0 * ctx / window
+    for sid, (_ts, ctx, model) in latest.items():
+        pcts[sid] = 100.0 * ctx / _window_for_peak(model_peak.get(model, 0))
     return aggs, pcts
 
 

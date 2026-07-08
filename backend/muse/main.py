@@ -66,6 +66,19 @@ async def lifespan(app: FastAPI):
     app.state.autopilot = AutopilotController()
     # Parsed usage-limit resets anchor stats' 5h window (observed > estimated).
     app.state.autopilot.on_reset = app.state.service.usage_history.record_reset
+
+    # Limit-hit sightings calibrate the runway's observed ceiling: the window's
+    # spend at the moment of the hit is the plan's effective cap (subscription
+    # plans publish no $ numbers, so the wall is only learnable by hitting it).
+    def _on_limit(kind: str) -> None:
+        from . import runway as runway_mod
+
+        rw = runway_mod.compute_runway(app.state.service.usage_history)
+        cost = rw.five_hour.cost_usd if kind == "5h" else rw.week.cost_usd
+        if cost > 0:
+            app.state.service.usage_history.record_limit_hit(kind, cost)
+
+    app.state.autopilot.on_limit = _on_limit
     # AI idle mode: the controller requests drafts and reads results through
     # these callables (it never imports the service or touches the AI worker).
     app.state.autopilot.enqueue_draft = app.state.service.enqueue_draft_reply

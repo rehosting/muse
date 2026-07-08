@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -27,6 +27,11 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS rate_reset (
     resets_at   TEXT PRIMARY KEY,      -- UTC ISO; observed 5h-window reset boundary
     observed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS limit_hit (
+    observed_at TEXT PRIMARY KEY,      -- local ISO; when a usage-limit banner was seen
+    kind        TEXT NOT NULL DEFAULT '5h',  -- '5h' | 'week'
+    window_cost REAL NOT NULL          -- spend in that window at the moment of the hit
 );
 CREATE TABLE IF NOT EXISTS usage_daily (
     day         TEXT NOT NULL,         -- local YYYY-MM-DD
@@ -146,6 +151,50 @@ class UsageHistoryStore:
             return datetime.fromisoformat(r["m"])
         except ValueError:
             return None
+
+    # --- observed limit ceilings -------------------------------------------------
+    # Subscription plans have no published $ caps, so the honest budget is the
+    # spend level at which the wall was actually hit. Each banner sighting records
+    # the window's spend; the recent MAX is the effective ceiling.
+
+    def record_limit_hit(self, kind: str, window_cost: float,
+                         dedupe_minutes: int = 30) -> bool:
+        """Record one observed limit hit. Banners persist across ticks, so hits of
+        the same kind within `dedupe_minutes` are one sighting. Returns True if
+        recorded."""
+        now = datetime.now().astimezone()
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT MAX(observed_at) AS m FROM limit_hit WHERE kind=?", (kind,)
+            ).fetchone()
+        if r and r["m"]:
+            try:
+                last = datetime.fromisoformat(r["m"])
+                if (now - last).total_seconds() < dedupe_minutes * 60:
+                    return False
+            except ValueError:
+                pass
+
+        def work():
+            self._conn.execute(
+                "INSERT OR IGNORE INTO limit_hit(observed_at, kind, window_cost) "
+                "VALUES(?,?,?)",
+                (now.isoformat(), kind, float(window_cost)),
+            )
+        self._write(work)
+        return True
+
+    def observed_ceiling(self, kind: str = "5h", days: int = 30) -> Optional[float]:
+        """Best estimate of the window's real cap: the highest spend that ever hit
+        the wall recently (the cap is at least that high)."""
+        cutoff = (datetime.now().astimezone() - timedelta(days=days)).isoformat()
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT MAX(window_cost) AS m FROM limit_hit "
+                "WHERE kind=? AND observed_at >= ?",
+                (kind, cutoff),
+            ).fetchone()
+        return float(r["m"]) if r and r["m"] is not None else None
 
     def day_count(self) -> int:
         with self._lock:
