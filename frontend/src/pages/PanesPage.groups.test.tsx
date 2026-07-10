@@ -7,6 +7,7 @@ import type { TmuxPane } from "../api/types";
 
 function pane(over: Partial<TmuxPane>): TmuxPane {
   return {
+    provider: "claude",
     pane_id: "%1",
     session_name: "a",
     window_index: 0,
@@ -26,6 +27,15 @@ function pane(over: Partial<TmuxPane>): TmuxPane {
     status: "idle",
     attention: "",
     mode: null,
+    capabilities: {
+      mode_switch: true,
+      session_reply: true,
+      rich_reply: true,
+      queue_replies: true,
+      reader: true,
+      drive: true,
+      slash_commands: true,
+    },
     preview: "",
     preview_tail: "",
     options: [],
@@ -53,7 +63,22 @@ describe("buildGroups", () => {
   it("marks a session of only idle non-Claude shells as a deletable placeholder", () => {
     const groups = buildGroups(
       buildWindows([
-        pane({ session_name: "empty", command: "bash", muse_session_id: null, status: "idle" }),
+        pane({
+          provider: null,
+          session_name: "empty",
+          command: "bash",
+          muse_session_id: null,
+          status: "idle",
+          capabilities: {
+            mode_switch: false,
+            session_reply: false,
+            rich_reply: false,
+            queue_replies: false,
+            reader: false,
+            drive: false,
+            slash_commands: false,
+          },
+        }),
         pane({ pane_id: "%9", session_name: "live", command: "claude", status: "working" }),
       ]),
     );
@@ -97,6 +122,31 @@ describe("TaskRow move menu", () => {
     fireEvent.click(screen.getByTitle("Move to a group"));
     fireEvent.click(screen.getByText("New group…"));
     expect(onMoveNew).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TaskRow close (✕)", () => {
+  const win = buildWindows([pane({ session_name: "a", window_id: "@7", window_name: "job" })])[0];
+
+  it("shows an always-visible close button that fires onRemove (opens the confirm)", () => {
+    const onRemove = vi.fn();
+    const onOpen = vi.fn();
+    render(<TaskRow win={win} onOpen={onOpen} onRemove={onRemove} />);
+    const btn = screen.getByLabelText("Close session");
+    fireEvent.click(btn);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(onOpen).not.toHaveBeenCalled(); // click doesn't also open the pane
+  });
+
+  it("omits the close button without onRemove", () => {
+    render(<TaskRow win={win} onOpen={() => {}} />);
+    expect(screen.queryByLabelText("Close session")).toBeNull();
+  });
+
+  it("omits the close button when the window has no id (can't target it)", () => {
+    const w = buildWindows([pane({ session_name: "a", window_id: "" })])[0];
+    render(<TaskRow win={w} onOpen={() => {}} onRemove={() => {}} />);
+    expect(screen.queryByLabelText("Close session")).toBeNull();
   });
 });
 

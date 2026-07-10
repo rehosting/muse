@@ -37,13 +37,23 @@ def _write_session(codex_dir):
         _line("response_item", {"type": "custom_tool_call_output", "call_id": "c2", "output": "ok"}),
         _line("response_item", {"type": "message", "role": "assistant",
                                 "content": [{"type": "output_text", "text": "done"}]}),
-        _line("event_msg", {"type": "token_count", "info": {"total_token_usage": {
-            "input_tokens": 2000, "cached_input_tokens": 1000, "output_tokens": 100,
-            "reasoning_output_tokens": 0}}}),
+        _line("event_msg", {"type": "token_count", "info": {
+            "model_context_window": 258400,
+            "last_token_usage": {"input_tokens": 32000, "output_tokens": 100},
+            "total_token_usage": {
+                "input_tokens": 2000, "cached_input_tokens": 1000, "output_tokens": 100,
+                "reasoning_output_tokens": 0,
+            },
+        }}),
         # last (cumulative) wins; real = (6000-1000) + 500 + 178 = 5678
-        _line("event_msg", {"type": "token_count", "info": {"total_token_usage": {
-            "input_tokens": 6000, "cached_input_tokens": 1000, "output_tokens": 500,
-            "reasoning_output_tokens": 178}}}),
+        _line("event_msg", {"type": "token_count", "info": {
+            "model_context_window": 258400,
+            "last_token_usage": {"input_tokens": 103597, "output_tokens": 500},
+            "total_token_usage": {
+                "input_tokens": 6000, "cached_input_tokens": 1000, "output_tokens": 500,
+                "reasoning_output_tokens": 178,
+            },
+        }}),
         _line("compacted", {"message": "summary", "replacement_history": []}),
     ]
     f = d / f"rollout-2026-06-08T00-00-00-{UUID}.jsonl"
@@ -56,6 +66,7 @@ def codex_env(tmp_path, monkeypatch):
     codex.get_settings  # noqa: B018
     monkeypatch.setattr(codex, "get_settings", lambda: SimpleNamespace(codex_dir=tmp_path))
     codex._summary_cache.clear()
+    codex._context_cache.clear()
     _write_session(tmp_path)
     return tmp_path
 
@@ -71,6 +82,12 @@ def test_discovery_and_metadata(codex_env):
     assert s.model == "gpt-5.5"
     assert s.project_cwd == "/work/proj"
     assert s.total_tokens == 5678  # last cumulative token_count wins
+
+
+def test_context_pct_uses_latest_prompt_tokens(codex_env):
+    pct = codex.context_pct(f"codex:{UUID}")
+    assert pct is not None
+    assert round(pct) == 40  # 103,597 / 258,400
 
 
 def test_thread_parse_and_tool_pairing(codex_env):

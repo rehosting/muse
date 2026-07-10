@@ -100,4 +100,24 @@ describe("computeToolRuns", () => {
     expect(runs.get("a0")?.calls).toBe(3);
     expect(runs.get("talk")).toBeUndefined();
   });
+
+  it("ExitPlanMode / AskUserQuestion render standalone — never folded into a run", () => {
+    for (const name of ["ExitPlanMode", "AskUserQuestion"]) {
+      // A stretch that WOULD be a run of 3, split by a plan/question in the middle.
+      const items = [
+        makeToolOnlyItem("x0", 1, 1),
+        makeHiddenUserItem("x0-r"),
+        makeToolOnlyItem("special", 1, 0, { name }),
+        makeHiddenUserItem("special-r"),
+        makeToolOnlyItem("x1", 1, 1),
+        makeHiddenUserItem("x1-r"),
+        makeToolOnlyItem("x2", 1, 0),
+      ];
+      const runs = computeToolRuns(items);
+      // The plan/question is not a run member, and it breaks the surrounding run
+      // so neither side (1 call, then 2) reaches MIN_RUN_CALLS.
+      expect(runs.get("special")).toBeUndefined();
+      expect(runs.size).toBe(0);
+    }
+  });
 });

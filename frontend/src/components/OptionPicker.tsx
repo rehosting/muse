@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { PendingOptions } from "../api/types";
+import Markdown from "./Markdown";
 
 const SOURCE_BADGE: Record<string, string> = {
   permission: "permission",
@@ -24,6 +25,9 @@ export default function OptionPicker({
 }) {
   const [typing, setTyping] = useState<string | null>(null); // option id in free-text mode
   const [freeText, setFreeText] = useState("");
+  // Long-form context (a plan) starts capped-with-scroll; the user expands it to
+  // read the whole thing in place rather than switching to the raw terminal.
+  const [showFullDetail, setShowFullDetail] = useState(false);
 
   return (
     <div className="option-picker" role="group" aria-label="Pending options">
@@ -36,6 +40,23 @@ export default function OptionPicker({
           <span className="option-more">+{pending.remaining_questions} more after this</span>
         )}
       </div>
+      {pending.detail && (
+        <div className="option-picker-detail">
+          <div
+            className={`option-detail-body${showFullDetail ? " expanded" : ""}`}
+            // Scroll history inside the picker; a wheel here shouldn't yank the
+            // whole conversation. Rendered as markdown so plans read as intended.
+          >
+            <Markdown>{pending.detail}</Markdown>
+          </div>
+          <button
+            className="option-detail-toggle"
+            onClick={() => setShowFullDetail((v) => !v)}
+          >
+            {showFullDetail ? "▴ collapse" : "▾ read full plan"}
+          </button>
+        </div>
+      )}
       <div className="option-chips">
         {pending.options.map((o) =>
           o.kind === "free_text" ? (

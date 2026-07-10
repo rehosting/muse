@@ -5,6 +5,7 @@ validates window ids and group names before shelling out."""
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from types import SimpleNamespace
 
 from muse.autopilot import tmux as tmux_mod
 from muse.routers import tmux as tmux_router
@@ -56,6 +57,12 @@ def test_rename_window_disables_auto_rename_then_renames(monkeypatch):
     ]
 
 
+def test_infer_provider_prefers_start_command_then_window_name():
+    assert tmux_router._infer_provider("node", "codex", "scratch") == "codex"
+    assert tmux_router._infer_provider("python", "antigravity --resume", "scratch") == "gemini"
+    assert tmux_router._infer_provider("bash", "", "OpenCode") == "opencode"
+
+
 # --- router endpoints -------------------------------------------------------------
 
 
@@ -67,11 +74,41 @@ class FakeStore:
         self.entries.append((sid, action, detail))
 
 
+class FakeService:
+    def __init__(self):
+        self.created_packs = []
+
+    def create_pack(
+        self,
+        source_session_id,
+        include_brief=True,
+        note_ids=None,
+        include_files=True,
+        extra_md="",
+        title="",
+    ):
+        self.created_packs.append(
+            {
+                "source_session_id": source_session_id,
+                "include_brief": include_brief,
+                "note_ids": note_ids,
+                "include_files": include_files,
+                "extra_md": extra_md,
+                "title": title,
+            }
+        )
+        return SimpleNamespace(id="pk_test", path="/tmp/pk_test.md")
+
+    def refresh_sessions_soon(self):
+        return None
+
+
 @pytest.fixture
 def client(monkeypatch):
     app = FastAPI()
     app.include_router(tmux_router.router)
     app.state.autopilot = type("AP", (), {"store": FakeStore()})()
+    app.state.service = FakeService()
 
     calls: list[tuple] = []
     monkeypatch.setattr(tmux_router.tmux, "available", lambda: True)
@@ -92,6 +129,16 @@ def client(monkeypatch):
     )
     monkeypatch.setattr(
         tmux_router.tmux, "kill_window", lambda w: (calls.append(("killwin", w)) or (True, ""))
+    )
+    monkeypatch.setattr(
+        tmux_router.tmux, "send_text", lambda p, t, submit=True: (calls.append(("send", p, t, submit)) or (True, ""))
+    )
+    monkeypatch.setattr(
+        tmux_router.tmux,
+        "new_window",
+        lambda cwd, command, session=None, name=None: (
+            calls.append(("new-window", cwd, command, session, name)) or (True, "%99")
+        ),
     )
     # A window @7 whose active pane sits in a cwd claimed by a cleanup profile.
     monkeypatch.setattr(
@@ -117,6 +164,17 @@ def test_close_window_kills_only_without_cleanup(client, monkeypatch):
     r = client.post("/api/tmux/windows/@7/close", json={"cleanup": False})
     assert r.status_code == 200 and r.json()["cleanup_ran"] is False
     assert ("killwin", "@7") in client.calls and ran == []  # no cleanup when not opted in
+
+
+def test_pane_send_preserves_literal_spaces_when_not_submitting(client):
+    r = client.post("/api/tmux/panes/%252512/send", json={"text": " ", "submit": False})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert ("send", "%12", " ", False) in client.calls
+
+
+def test_pane_send_rejects_blank_submitted_prompt(client):
+    r = client.post("/api/tmux/panes/%252512/send", json={"text": "   ", "submit": True})
+    assert r.status_code == 400
 
 
 def test_close_window_runs_cleanup_after_kill(client, monkeypatch):
@@ -207,3 +265,66 @@ def test_rename_window_rejects_bad_names(client, bad):
 def test_rename_window_rejects_bad_window_id(client):
     r = client.post("/api/tmux/windows/nope/rename", json={"name": "x"})
     assert r.status_code == 400 and client.calls == []
+
+
+def test_launch_codex_from_codex_session_forks_in_place(client, monkeypatch):
+    monkeypatch.setattr(tmux_router.os.path, "isdir", lambda path: path == "/proj/stuff")
+    monkeypatch.setattr(
+        tmux_router.profiles_mod,
+        "find_profile",
+        lambda name: SimpleNamespace(name="Codex", cwd="~", command="codex", params=[]),
+    )
+    r = client.post(
+        "/api/tmux/codex/launch",
+        json={
+            "source_session_id": "codex:019f44ea-d2c3-7df1-9d1c-b240b4e748d8",
+            "cwd": "/proj/stuff",
+            "session": "work",
+            "window_name": "muse",
+        },
+    )
+    assert r.status_code == 200
+    assert client.app.state.service.created_packs == []
+    assert client.calls[-1] == (
+        "new-window",
+        "/proj/stuff",
+        "codex fork 019f44ea-d2c3-7df1-9d1c-b240b4e748d8",
+        "work",
+        "muse codex",
+    )
+
+
+def test_launch_codex_from_other_session_builds_reference_pack(client, monkeypatch):
+    monkeypatch.setattr(tmux_router.os.path, "isdir", lambda path: path == "/proj/stuff")
+    monkeypatch.setattr(
+        tmux_router.profiles_mod,
+        "find_profile",
+        lambda name: SimpleNamespace(name="Codex", cwd="~", command="codex --search", params=[]),
+    )
+    r = client.post(
+        "/api/tmux/codex/launch",
+        json={
+            "source_session_id": "sess-1",
+            "cwd": "/proj/stuff",
+            "session": "work",
+            "window_name": "muse",
+        },
+    )
+    assert r.status_code == 200
+    assert client.app.state.service.created_packs == [
+        {
+            "source_session_id": "sess-1",
+            "include_brief": True,
+            "note_ids": None,
+            "include_files": True,
+            "extra_md": "",
+            "title": "",
+        }
+    ]
+    assert client.calls[-1] == (
+        "new-window",
+        "/proj/stuff",
+        "codex --search 'Read /tmp/pk_test.md for context from my previous session'",
+        "work",
+        "muse codex",
+    )

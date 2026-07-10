@@ -785,6 +785,15 @@ function ToolLine({
   const status = toolStatus(tool);
   const arg = toolArg(tool);
 
+  // A plan or a question is content to read/answer, not a step to skim past — so
+  // render it inline (visible in the reader) instead of a collapsed tool row.
+  if (tool.name === "ExitPlanMode") {
+    return <PlanLine tool={tool} status={status} registerRef={registerRef} defaultOpen={focus} />;
+  }
+  if (tool.name === "AskUserQuestion") {
+    return <QuestionLine tool={tool} status={status} registerRef={registerRef} />;
+  }
+
   return (
     <div
       ref={(el) => registerRef(tool.id, el)}
@@ -803,6 +812,101 @@ function ToolLine({
         {tool.subagent && <span className="subagent-pill">{tool.subagent.agent_type}</span>}
       </div>
       <ResultConnector tool={tool} expanded={expanded} focus={focus} />
+    </div>
+  );
+}
+
+/** ExitPlanMode rendered as the plan itself: the markdown body inline (capped
+ *  with its own scroll, expandable), so a plan is reviewable in the reader
+ *  instead of only in the raw terminal. `answered` (has a result) dims it. */
+function PlanLine({
+  tool,
+  status,
+  registerRef,
+  defaultOpen = false,
+}: {
+  tool: ToolUse;
+  status: string;
+  registerRef: (id: string, el: HTMLElement | null) => void;
+  defaultOpen?: boolean;
+}) {
+  const [full, setFull] = useState(defaultOpen);
+  const plan = String(tool.input.plan ?? "").trim();
+  const answered = tool.result != null;
+  return (
+    <div
+      ref={(el) => registerRef(tool.id, el)}
+      className={`cc-line cc-plan-line${answered ? " answered" : ""}`}
+    >
+      <div className="cc-tool-head">
+        <span className={`cc-bullet status-${status}`}>⏺</span>
+        <span className="cc-tool-name">Plan</span>
+        {answered && <span className="cc-plan-answered">answered</span>}
+      </div>
+      {plan ? (
+        <>
+          <div className={`cc-plan-body${full ? " expanded" : ""}`}>
+            <Markdown>{plan}</Markdown>
+          </div>
+          <button className="cc-plan-toggle" onClick={() => setFull((v) => !v)}>
+            {full ? "▴ collapse plan" : "▾ read full plan"}
+          </button>
+        </>
+      ) : (
+        <div className="cc-plan-body">
+          <em>(empty plan)</em>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** AskUserQuestion rendered read-only in the stream: the question and its
+ *  choices, so it's visible in the reader. Answering happens through the
+ *  OptionPicker (which addresses the live pane); this is the record of the ask. */
+function QuestionLine({
+  tool,
+  status,
+  registerRef,
+}: {
+  tool: ToolUse;
+  status: string;
+  registerRef: (id: string, el: HTMLElement | null) => void;
+}) {
+  const questions = Array.isArray(tool.input.questions)
+    ? (tool.input.questions as Record<string, unknown>[])
+    : [];
+  const answered = tool.result != null;
+  return (
+    <div
+      ref={(el) => registerRef(tool.id, el)}
+      className={`cc-line cc-question-line${answered ? " answered" : ""}`}
+    >
+      <div className="cc-tool-head">
+        <span className={`cc-bullet status-${status}`}>⏺</span>
+        <span className="cc-tool-name">Question</span>
+        {answered && <span className="cc-plan-answered">answered</span>}
+      </div>
+      {questions.map((q, qi) => {
+        const opts = Array.isArray(q.options) ? (q.options as Record<string, unknown>[]) : [];
+        return (
+          <div key={qi} className="cc-question-block">
+            <div className="cc-question-prompt">
+              {String(q.question ?? q.header ?? "Select an option")}
+            </div>
+            <ul className="cc-question-opts">
+              {opts.map((o, oi) => (
+                <li key={oi}>
+                  <span className="cc-question-opt-label">{String(o.label ?? "")}</span>
+                  {o.description ? (
+                    <span className="cc-question-opt-desc"> — {String(o.description)}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
     </div>
   );
 }

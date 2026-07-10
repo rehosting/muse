@@ -1548,6 +1548,47 @@ body.resizing {
 .cc-tool-arg {
   color: var(--text-dim);
 }
+/* Plan / question rendered inline in the conversation (see PlanLine/QuestionLine):
+   readable content, not a collapsed tool step. A left accent marks them apart. */
+.cc-plan-line,
+.cc-question-line {
+  margin: 8px -6px;
+  padding: 4px 10px;
+  border-left: 2px solid var(--accent, #3b82f6);
+  border-radius: 4px;
+  background: var(--bg-elev);
+}
+.cc-plan-line.answered,
+.cc-question-line.answered { opacity: 0.7; }
+.cc-plan-answered {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.cc-plan-body {
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-top: 2px;
+  font-size: 14px;
+}
+.cc-plan-body.expanded { max-height: none; }
+.cc-plan-toggle {
+  margin-top: 4px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.cc-plan-toggle:hover { color: var(--text); }
+.cc-question-prompt { font-weight: 600; margin-top: 2px; }
+.cc-question-opts { margin: 4px 0 0; padding-left: 18px; }
+.cc-question-opts li { margin: 2px 0; }
+.cc-question-opt-label { font-weight: 600; }
+.cc-question-opt-desc { color: var(--text-dim); }
 .cc-result {
   margin: 2px 0 2px 14px;
   display: flex;
@@ -5444,6 +5485,36 @@ body:has(.panes-detail) .navbar { display: none; }
 }
 .option-prompt { font-weight: 600; }
 .option-more { font-size: 12px; color: var(--text-dim); }
+/* Long-form context (a plan) shown right above the choices, so it's reviewable
+   without switching to the raw terminal. Capped height with its own scroll;
+   "read full plan" lifts the cap. */
+.option-picker-detail {
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.option-detail-body {
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.option-detail-body.expanded { max-height: none; }
+.option-detail-toggle {
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+.option-detail-toggle:hover { color: var(--text); }
 .option-chips { display: flex; flex-direction: column; gap: 8px; }
 .option-chip {
   display: flex;
@@ -6182,6 +6253,22 @@ body:has(.panes-detail) .navbar { display: none; }
   cursor: pointer;
 }
 .task-pin.pinned { color: var(--warn, #d4a72c); }
+/* Close (kill session): subtle by default so it doesn't shout, reddening on
+   hover/focus/touch to signal it's destructive (a confirm still gates it). */
+.task-close {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 15px;
+  padding: 4px 2px 4px 6px;
+  min-width: 28px;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.task-close:hover,
+.task-close:focus-visible,
+.task-close:active { color: var(--danger, #e5534b); }
 .tasks-heading.tasks-pinned { color: var(--warn, #d4a72c); }
 .tasks-noise-toggle {
   width: 100%;

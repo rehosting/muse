@@ -771,6 +771,7 @@ export interface PendingOption {
 }
 
 export interface TmuxPane {
+  provider: "claude" | "gemini" | "codex" | "opencode" | null;
   pane_id: string;
   session_name: string;
   window_index: number;
@@ -790,6 +791,15 @@ export interface TmuxPane {
   status: "needs_you" | "responded" | "working" | "idle";
   attention: string;
   mode: "default" | "acceptEdits" | "plan" | "bypass" | null;
+  capabilities: {
+    mode_switch: boolean;
+    session_reply: boolean;
+    rich_reply: boolean;
+    queue_replies: boolean;
+    reader: boolean;
+    drive: boolean;
+    slash_commands: boolean;
+  };
   preview: string; // full visible screen (ANSI); empty when polled with previews=0
   preview_tail: string; // last visible line — task-list subtitle
   options: PendingOption[];
@@ -825,10 +835,11 @@ export interface ProfileParam {
 /** A launch profile from ~/.muse/profiles.toml: a template for opening a new window. */
 export interface Profile {
   name: string;
+  provider: string;
   cwd: string;
   command: string;
   params: ProfileParam[];
-  builtin: boolean; // the always-present "Claude" default
+  builtin: boolean; // one of muse's always-present built-ins
 }
 
 /** One window in a saved layout snapshot (for session-restore after a reboot). */
@@ -922,6 +933,7 @@ export interface PendingOptions {
   source: "permission" | "tool_question" | "none";
   available: boolean;
   prompt: string;
+  detail?: string; // long-form context to review before answering (e.g. a plan body)
   options: PendingOption[];
   current_index: number | null;
   fingerprint: string;
