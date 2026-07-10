@@ -21,6 +21,11 @@ export interface ToolRun {
 /** Shorter runs read fine as-is; grouping only pays off past this many calls. */
 export const MIN_RUN_CALLS = 3;
 
+// Tools whose content the user is meant to READ (a plan) or ANSWER (a question),
+// not skim as a step. They must never be folded into a collapsed run — they render
+// standalone so the plan/question is visible in the reader without opening a fold.
+const STANDALONE_TOOLS = new Set(["ExitPlanMode", "AskUserQuestion"]);
+
 // Tool-only assistant item: every block is a tool call or the thinking that
 // precedes one. (Thinking is folded into the run — focus mode reduces it to a
 // stub line anyway, and expanding the run brings the stubs back.)
@@ -28,8 +33,10 @@ function isToolish(item: ThreadItem): boolean {
   if (item.role !== "assistant" || item.blocks.length === 0) return false;
   let tools = 0;
   for (const b of item.blocks) {
-    if (b.kind === "tool_use" && b.tool_use) tools++;
-    else if (b.kind !== "thinking") return false;
+    if (b.kind === "tool_use" && b.tool_use) {
+      if (STANDALONE_TOOLS.has(b.tool_use.name)) return false; // renders on its own
+      tools++;
+    } else if (b.kind !== "thinking") return false;
   }
   return tools > 0;
 }
