@@ -623,6 +623,7 @@ class PendingOptions(BaseModel):
     source: Literal["permission", "tool_question", "none"] = "none"
     available: bool = False  # False when nothing is pending / actionable
     prompt: str = ""
+    detail: str = ""  # long-form context to review before answering (e.g. a plan body)
     options: list[PendingOption] = Field(default_factory=list)
     current_index: Optional[int] = None  # highlighted row in the live buffer
     fingerprint: str = ""  # client echoes this back on select for stale-protection

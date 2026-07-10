@@ -119,3 +119,22 @@ def test_exit_plan_mode_detected():
     assert menu is not None
     assert len(menu.options) == 2
     assert menu.options[0].label == "Yes, proceed"
+    # The full plan body rides along so it's reviewable at the point of answering.
+    assert menu.detail == "Step one\nStep two"
+
+
+def test_exit_plan_fingerprint_tracks_plan_body():
+    """Two plans with the same one-line prompt but different bodies must not share a
+    fingerprint — otherwise a stale selection could act on a re-issued plan."""
+    def menu_for(plan: str):
+        tu = ToolUse(id="p1", name="ExitPlanMode", input={"plan": plan})
+        item = ThreadItem(
+            uuid="u1", role="assistant", type="assistant",
+            blocks=[ContentBlock(kind="tool_use", tool_use=tu)],
+        )
+        return find_pending_tool_question(_thread(item))
+
+    a = menu_for("Do X\nthen Y")
+    b = menu_for("Do X\nthen Z")
+    assert a.prompt == b.prompt  # same one-liner
+    assert fingerprint(a.prompt, a.options, a.detail) != fingerprint(b.prompt, b.options, b.detail)

@@ -36,9 +36,10 @@ def _to_api(menu: opt.ParsedMenu, session_id: str, pane_id: str) -> PendingOptio
         source=menu.source,
         available=True,
         prompt=menu.prompt,
+        detail=menu.detail,
         options=options,
         current_index=menu.current_index,
-        fingerprint=opt.fingerprint(menu.prompt, menu.options),
+        fingerprint=opt.fingerprint(menu.prompt, menu.options, menu.detail),
         remaining_questions=menu.remaining_questions,
         pane_id=pane_id,
     )

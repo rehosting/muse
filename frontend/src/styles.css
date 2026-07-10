@@ -5444,6 +5444,36 @@ body:has(.panes-detail) .navbar { display: none; }
 }
 .option-prompt { font-weight: 600; }
 .option-more { font-size: 12px; color: var(--text-dim); }
+/* Long-form context (a plan) shown right above the choices, so it's reviewable
+   without switching to the raw terminal. Capped height with its own scroll;
+   "read full plan" lifts the cap. */
+.option-picker-detail {
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.option-detail-body {
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.option-detail-body.expanded { max-height: none; }
+.option-detail-toggle {
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: var(--panel, var(--bg));
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+.option-detail-toggle:hover { color: var(--text); }
 .option-chips { display: flex; flex-direction: column; gap: 8px; }
 .option-chip {
   display: flex;

@@ -933,6 +933,7 @@ export interface PendingOptions {
   source: "permission" | "tool_question" | "none";
   available: boolean;
   prompt: string;
+  detail?: string; // long-form context to review before answering (e.g. a plan body)
   options: PendingOption[];
   current_index: number | null;
   fingerprint: string;

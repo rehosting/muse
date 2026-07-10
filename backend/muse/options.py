@@ -79,16 +79,25 @@ class ParsedMenu:
     options: list[MenuOption] = field(default_factory=list)
     current_index: Optional[int] = None  # highlighted row, 0-based among options
     remaining_questions: int = 0  # AskUserQuestion with >1 question still pending
+    # Long-form context to review before answering — the full ExitPlanMode plan
+    # (markdown), so it can be read where it's answered instead of only in the
+    # terminal. Empty for permission dialogs and plain questions (prompt suffices).
+    detail: str = ""
 
 
-def fingerprint(prompt: str, options: list[MenuOption]) -> str:
+def fingerprint(prompt: str, options: list[MenuOption], detail: str = "") -> str:
     """Stable hash of what the user is being shown. The client echoes it back on
-    select so the server can refuse (409) if the buffer changed underneath."""
+    select so the server can refuse (409) if the buffer changed underneath. The
+    detail (e.g. a plan's body) is folded in so a re-issued plan invalidates a
+    stale selection even when its one-line prompt is unchanged."""
     h = hashlib.sha256()
     h.update(prompt.strip().encode("utf-8", "replace"))
     for opt in options:
         h.update(b"\x00")
         h.update(opt.label.strip().encode("utf-8", "replace"))
+    if detail:
+        h.update(b"\x01")
+        h.update(detail.strip().encode("utf-8", "replace"))
     return h.hexdigest()[:16]
 
 
@@ -215,8 +224,7 @@ def _ask_user_question_menu(tool_input: dict) -> ParsedMenu:
 
 def _exit_plan_menu(tool_input: dict) -> ParsedMenu:
     plan = (tool_input.get("plan") or "").strip()
-    first = plan.splitlines()[0].strip() if plan else ""
-    prompt = "Ready to code? " + (f"Plan: {first}" if first else "(plan presented)")
+    prompt = "Review the plan, then choose:" if plan else "Ready to code?"
     return ParsedMenu(
         source="tool_question",
         prompt=prompt,
@@ -224,4 +232,5 @@ def _exit_plan_menu(tool_input: dict) -> ParsedMenu:
             MenuOption(id="1", label="Yes, proceed", kind="menu"),
             MenuOption(id="2", label="No, keep planning", kind="menu"),
         ],
+        detail=plan,  # full plan markdown — reviewable at the point of answering
     )
