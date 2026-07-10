@@ -34,6 +34,17 @@ export default function DrivePage() {
   const [draft, setDraft] = useState(""); // prefills the composer (top suggestion)
   const [queueBump, setQueueBump] = useState(0); // refresh QueueChips right after queueing
   const suggested = useRef(false);
+  const providerLabel =
+    thread?.provider === "claude"
+      ? "Claude"
+      : thread?.provider === "codex"
+        ? "Codex"
+        : thread?.provider === "gemini"
+          ? "Gemini"
+          : thread?.provider === "opencode"
+            ? "OpenCode"
+            : "Agent";
+  const canQueue = thread?.provider === "claude";
 
   // Enqueue suggest_replies, poll the job, prefill the composer with the top one and
   // expose the rest as tap-to-edit chips. Reused by auto-prefill and the ✦ button.
@@ -57,7 +68,12 @@ export default function DrivePage() {
   const status = pending
     ? { cls: "wait", text: "Needs your input — choose below" }
     : live
-      ? { cls: "busy", text: "Claude is working — you can queue a reply or interrupt" }
+      ? {
+          cls: "busy",
+          text: canQueue
+            ? `${providerLabel} is working — you can queue a reply or interrupt`
+            : `${providerLabel} is working — send a reply or interrupt`,
+        }
       : { cls: "idle", text: "Your move — edit the suggested reply or write your own" };
 
   useEffect(() => {
@@ -157,7 +173,7 @@ export default function DrivePage() {
 
         {pending && <OptionPicker pending={pending} sending={sending} onSelect={select} />}
 
-        <QueueChips sessionId={sessionId} refreshKey={queueBump} />
+        {canQueue && <QueueChips sessionId={sessionId} refreshKey={queueBump} />}
 
         {suggestions.length > 1 && (
           <div className="option-chips drive-suggestions">
@@ -178,7 +194,7 @@ export default function DrivePage() {
           <ReplyBox
             sessionId={sessionId}
             hasPane
-            busy={live}
+            busy={live && canQueue}
             variant="cockpit"
             draft={draft}
             onQueued={() => setQueueBump((n) => n + 1)}

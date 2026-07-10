@@ -247,6 +247,10 @@ class SessionService:
             self._sessions_refreshing = True
         threading.Thread(target=self._bg_rebuild_sessions, daemon=True).start()
 
+    def refresh_sessions_soon(self) -> None:
+        """Public nudge for routes that know session artifacts may have changed."""
+        self._kick_sessions_refresh()
+
     def _bg_rebuild_sessions(self) -> None:
         try:
             self._rebuild_sessions()

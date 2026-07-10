@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -26,6 +27,8 @@ from ..autopilot import sessions as live_discovery
 from ..autopilot import snapshot as layout_snapshot
 from ..autopilot import tmux
 from ..models import PendingOption, SlashCommand, TmuxLayout, TmuxPane
+from ..providers import codex as codex_provider
+from ..providers import provider_for
 
 router = APIRouter(prefix="/api/tmux", tags=["tmux"])
 
@@ -54,6 +57,18 @@ _KEYS = {
 # Modifier prefixes on a key string: "c-c" → Ctrl-C, "m-f" → Alt-F, "c-left".
 _MOD_RE = re.compile(r"^((?:[cms]-)+)(.+)$")
 _FN_RE = re.compile(r"^f([1-9]|1[0-2])$")
+_COMMAND_PROVIDER = {
+    "claude": "claude",
+    "antigravity": "gemini",
+    "codex": "codex",
+    "opencode": "opencode",
+}
+_WINDOW_PROVIDER = {
+    "claude": "claude",
+    "gemini": "gemini",
+    "codex": "codex",
+    "opencode": "opencode",
+}
 
 
 def _resolve_key(raw: str) -> Optional[tuple[str, bool]]:
@@ -78,6 +93,39 @@ def _resolve_key(raw: str) -> Optional[tuple[str, bool]]:
     if len(k) == 1 and k.isprintable():
         return k, True  # literal char (/, |, -, …)
     return None
+
+
+def _infer_provider(
+    command: str, start_command: str = "", window_name: str = ""
+) -> Optional[str]:
+    """Best-effort provider tag for a tmux pane. Tracked sessions use their real
+    provider id; untracked panes fall back to the executable name."""
+    for raw in (start_command, command):
+        try:
+            argv = shlex.split(raw or "")
+        except ValueError:
+            continue
+        if not argv:
+            continue
+        provider = _COMMAND_PROVIDER.get(os.path.basename(argv[0]).lower())
+        if provider:
+            return provider
+    return _WINDOW_PROVIDER.get((window_name or "").strip().lower())
+
+
+def _pane_capabilities(provider: Optional[str], tracked: bool) -> dict[str, bool]:
+    is_claude = provider == "claude"
+    return {
+        "mode_switch": is_claude,
+        "session_reply": tracked and provider is not None,
+        "rich_reply": tracked and is_claude,
+        "queue_replies": tracked and is_claude,
+        "reader": tracked and provider is not None,
+        "drive": tracked and provider is not None,
+        "slash_commands": is_claude,
+    }
+
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 # A full-width run of the same rule/border char (Claude's input box, separators)
 # wraps into many junk lines on a phone — collapse long runs to a short rule.
@@ -130,6 +178,14 @@ class NewSession(BaseModel):
 class LaunchProfile(BaseModel):
     values: dict[str, str] = {}  # collected values for the profile's declared params
     session: str | None = None  # target group (tmux session); default = _default_session()
+
+
+class LaunchCodexFromSession(BaseModel):
+    source_session_id: str
+    cwd: str
+    session: str | None = None  # target group (tmux session); default = source/default
+    window_name: str = ""
+    prompt: str = ""
 
 
 class GroupBody(BaseModel):
@@ -188,6 +244,11 @@ def _default_session() -> str | None:
     return max(pool, key=lambda s: len(windows.get(s, ())), default=None)
 
 
+def _codex_window_label(window_name: str, cwd: str) -> str:
+    base = " ".join((window_name or os.path.basename(cwd.rstrip("/")) or "session").split())
+    return f"{base} codex"[:40]
+
+
 @router.get("/layout", response_model=TmuxLayout)
 def layout(request: Request, previews: int = 1) -> TmuxLayout:
     """The whole tmux topology. `previews=0` omits the (heavy) per-pane screen
@@ -228,14 +289,24 @@ def layout(request: Request, previews: int = 1) -> TmuxLayout:
             else []
         )
         ls = live_by_pane.get(p["pane_id"])
+        provider = (
+            provider_for(ls.session_id).id
+            if ls
+            else _infer_provider(p["command"], p.get("start_command", ""), p["window_name"])
+        )
+        context_pct = ctx_pcts.get(ls.session_id) if ls else None
+        if context_pct is None and ls and provider == "codex":
+            context_pct = codex_provider.context_pct(ls.session_id)
+        caps = _pane_capabilities(provider, ls is not None)
         status, attention = _attention(ls, bool(options))
         # Every Claude pane has a mode; its "default" footer drops the status-line
         # marker, so fall back to default rather than hiding the (still tappable) chip.
         mode = opt.parse_mode(screen)
-        if mode is None and p["command"] == "claude":
+        if mode is None and provider == "claude":
             mode = "default"
         panes.append(
             TmuxPane(
+                provider=provider,
                 pane_id=p["pane_id"],
                 session_name=p["session_name"],
                 window_index=p["window_index"],
@@ -250,11 +321,12 @@ def layout(request: Request, previews: int = 1) -> TmuxLayout:
                 session_attached=p["session_attached"],
                 last_activity=p["last_activity"],
                 muse_session_id=ls.session_id if ls else None,
-                context_pct=ctx_pcts.get(ls.session_id) if ls else None,
+                context_pct=context_pct,
                 queued=queued.get(ls.session_id, 0) if ls else 0,
                 status=status,
                 attention=attention,
                 mode=mode,
+                capabilities=caps,
                 preview=preview if previews else "",
                 preview_tail=_tail_line(preview),
                 options=options,
@@ -321,8 +393,11 @@ def capture(pane_id: str, lines: int = 40) -> dict:
 @router.post("/panes/{pane_id}/send")
 def send(pane_id: str, body: PaneSend, request: Request) -> dict:
     _require_pane(pane_id)
-    text = body.text.strip()
-    if not text:
+    text = body.text
+    # Terminal passthrough can legitimately send a literal space chunk with
+    # submit=false. Preserve raw text; only reject a truly empty payload, and
+    # keep blank submitted prompts out of the normal composer flow.
+    if text == "" or (body.submit and not text.strip()):
         raise HTTPException(status_code=400, detail="text is empty")
     ok, err = tmux.send_text(pane_id, text, submit=body.submit)
     if not ok:
@@ -424,10 +499,75 @@ def launch_profile(name: str, body: LaunchProfile, request: Request) -> dict:
     ok, result = tmux.new_window(cwd, command, session=session, name=label or None)
     if not ok:
         raise HTTPException(status_code=400, detail=f"tmux: {result}")
+    service = getattr(request.app.state, "service", None)
+    if service is not None:
+        try:
+            service.refresh_sessions_soon()
+        except Exception:
+            pass
     request.app.state.autopilot.store.log(
         "tmux", "profile_launch", f"{profile.name}: {result} in {cwd}"
     )
     return {"ok": True, "pane_id": result}
+
+
+@router.post("/codex/launch")
+def launch_codex_from_session(body: LaunchCodexFromSession, request: Request) -> dict:
+    """Open a Codex window in the source session's cwd/group, seeded from another
+    muse session. Codex sources use native `codex fork`; everything else becomes
+    a muse-owned context pack that the new Codex session reads on startup."""
+    if not tmux.available():
+        raise HTTPException(status_code=400, detail="tmux is not running")
+    source_session_id = body.source_session_id.strip()
+    cwd = body.cwd.strip()
+    if not source_session_id:
+        raise HTTPException(status_code=400, detail="source_session_id is required")
+    if not cwd:
+        raise HTTPException(status_code=400, detail="cwd is required")
+    if not os.path.isdir(cwd):
+        raise HTTPException(status_code=400, detail=f"not a directory: {cwd}")
+    try:
+        profile = profiles_mod.find_profile("Codex")
+    except profiles_mod.ProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if profile is None:
+        raise HTTPException(status_code=404, detail="no such profile: 'Codex'")
+    _profile_cwd, base_command = profiles_mod.render(profile, {})
+    session = _require_session_name(body.session) if body.session else _default_session()
+    prompt = body.prompt.strip()
+    pack_id = None
+    if provider_for(source_session_id).id == "codex":
+        source_id = source_session_id.removeprefix("codex:")
+        command = f"{base_command} fork {shlex.quote(source_id)}"
+        if prompt:
+            command += f" {shlex.quote(prompt)}"
+    else:
+        service = getattr(request.app.state, "service", None)
+        if service is None:
+            raise HTTPException(status_code=500, detail="session service unavailable")
+        pack = service.create_pack(source_session_id, True, None, True, "", "")
+        pack_id = pack.id
+        preamble = f"Read {pack.path} for context from my previous session"
+        full_prompt = f"{preamble}, then: {prompt}" if prompt else preamble
+        command = f"{base_command} {shlex.quote(full_prompt)}"
+    ok, result = tmux.new_window(
+        cwd,
+        command,
+        session=session,
+        name=_codex_window_label(body.window_name, cwd),
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"tmux: {result}")
+    service = getattr(request.app.state, "service", None)
+    if service is not None:
+        try:
+            service.refresh_sessions_soon()
+        except Exception:
+            pass
+    request.app.state.autopilot.store.log(
+        "tmux", "codex_launch", f"{source_session_id}: {result} in {cwd}"
+    )
+    return {"ok": True, "pane_id": result, "pack_id": pack_id}
 
 
 # --- Session restore -------------------------------------------------------------

@@ -419,6 +419,19 @@ export const api = {
       { values, session: session ?? null },
     ),
 
+  launchCodexFromSession: (body: {
+    source_session_id: string;
+    cwd: string;
+    session?: string | null;
+    window_name?: string;
+    prompt?: string;
+  }) =>
+    sendJSON<{ ok: boolean; pane_id: string; pack_id: string | null }>(
+      "POST",
+      "/api/tmux/codex/launch",
+      body,
+    ),
+
   // --- session restore (rebuild the tmux layout after a reboot) ---
   getTmuxSnapshot: () => getJSON<LayoutSnapshot>("/api/tmux/snapshot"),
 

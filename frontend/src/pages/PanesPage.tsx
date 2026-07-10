@@ -19,6 +19,12 @@ import { useTypeToFocus } from "../util/typeToFocus";
 type Status = "needs_you" | "responded" | "working" | "idle";
 const RANK: Record<Status, number> = { needs_you: 0, responded: 1, working: 2, idle: 3 };
 const SECTION_ORDER: Status[] = ["needs_you", "responded", "working", "idle"];
+const PROVIDER_LABEL: Record<string, string> = {
+  claude: "Claude",
+  gemini: "Gemini",
+  codex: "Codex",
+  opencode: "OpenCode",
+};
 
 export interface Win {
   key: string;
@@ -37,6 +43,22 @@ const SORTS: { mode: SortMode; label: string }[] = [
   { mode: "recent", label: "Recent" },
   { mode: "alpha", label: "A–Z" },
 ];
+
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+export async function waitForPane(
+  getLayout: () => Promise<TmuxLayout>,
+  paneId: string,
+  attempts = 20,
+  delayMs = 250,
+): Promise<TmuxLayout> {
+  let layout = await getLayout();
+  for (let i = 1; i < attempts && !layout.panes.some((p) => p.pane_id === paneId); i += 1) {
+    await sleep(delayMs);
+    layout = await getLayout();
+  }
+  return layout;
+}
 
 // Order windows for the current sort. "attention" keeps the urgent-first grouping
 // (ties broken by recency); "recent" and "alpha" are flat reorderings.
@@ -81,7 +103,7 @@ export interface Group {
   windows: number; // window count in the session
   status: Status; // most-urgent status across its windows
   last_activity: number;
-  placeholder: boolean; // every pane is a non-Claude idle shell → safe to delete
+  placeholder: boolean; // every pane is an idle non-agent shell → safe to delete
 }
 
 export function buildGroups(wins: Win[]): Group[] {
@@ -102,12 +124,12 @@ export function buildGroups(wins: Win[]): Group[] {
   return groups;
 }
 
-// Scratch/background: a window with no Claude agent that's just sitting idle.
+// Scratch/background: a window with no tracked or known agent provider that's just sitting idle.
 // (We deliberately ignore tmux's session_attached here — when you're driving from a
 // phone no terminal client is attached, so *every* session reads as detached; that
 // flag says nothing about whether the session is worth your attention.)
 function isNoise(w: Win): boolean {
-  const hasAgent = w.panes.some((p) => p.muse_session_id || p.command === "claude");
+  const hasAgent = w.panes.some((p) => p.muse_session_id || p.provider);
   return !hasAgent && w.status === "idle";
 }
 
@@ -181,7 +203,7 @@ export default function PanesPage() {
       setCreating(true);
       try {
         const { pane_id } = await api.launchProfile(name, values, group);
-        const fresh = await api.getTmuxLayout(false); // pick up the new window
+        const fresh = await waitForPane(() => api.getTmuxLayout(false), pane_id);
         setLayout(fresh);
         // Follow the new window into view before selecting it. The deck is scoped to the
         // active name/group filter, so if either would exclude the new pane, selecting it
@@ -189,12 +211,39 @@ export default function PanesPage() {
         // filter to whatever session the window actually landed in (same idea as deckMove).
         const landed = fresh.panes.find((p) => p.pane_id === pane_id);
         setFilter("");
-        if (landed && group !== null && landed.session_name !== group) {
-          setGroup(landed.session_name);
+        if (landed) {
+          if (group !== null && landed.session_name !== group) setGroup(landed.session_name);
+          select(pane_id); // jump straight into it
         }
-        select(pane_id); // jump straight into it
       } catch (e) {
         window.alert(e instanceof Error ? e.message : "Could not launch window");
+      } finally {
+        setCreating(false);
+      }
+    },
+    [creating, group, select, setGroup],
+  );
+  const launchCodexFromPane = useCallback(
+    async (pane: TmuxPane) => {
+      if (creating || !pane.muse_session_id) return;
+      setCreating(true);
+      try {
+        const { pane_id } = await api.launchCodexFromSession({
+          source_session_id: pane.muse_session_id,
+          cwd: pane.cwd,
+          session: pane.session_name,
+          window_name: pane.window_name,
+        });
+        const fresh = await waitForPane(() => api.getTmuxLayout(false), pane_id);
+        setLayout(fresh);
+        const landed = fresh.panes.find((p) => p.pane_id === pane_id);
+        setFilter("");
+        if (landed) {
+          if (group !== null && landed.session_name !== group) setGroup(landed.session_name);
+          select(pane_id);
+        }
+      } catch (e) {
+        window.alert(e instanceof Error ? e.message : "Could not launch Codex session");
       } finally {
         setCreating(false);
       }
@@ -436,6 +485,7 @@ export default function PanesPage() {
           groups={groups.map((g) => g.name)}
           onMoveWindow={deckMove}
           onMoveToNewGroup={deckMoveToNewGroup}
+          onLaunchCodex={launchCodexFromPane}
           onRenameWindow={renameWindow}
           onRemoveWindow={removeWindow}
         />
@@ -445,7 +495,9 @@ export default function PanesPage() {
   }
 
   const groupNames = groups.map((g) => g.name);
-  const row = (w: Win, muted = false) => (
+  const row = (w: Win, muted = false) => {
+    const sourcePane = w.panes.find((p) => !!p.muse_session_id) ?? null;
+    return (
     <TaskRow
       key={w.key}
       win={w}
@@ -457,10 +509,12 @@ export default function PanesPage() {
       groups={groupNames}
       onMove={(session) => moveWindow(w.rep.window_id, session)}
       onMoveNew={() => moveToNewGroup(w.rep.window_id)}
+      onLaunchCodex={sourcePane ? () => launchCodexFromPane(sourcePane) : undefined}
       onRenameWindow={() => renameWindow(w.rep.window_id, w.window_name)}
       onRemove={() => removeWindow(w.rep.window_id, w.window_name)}
     />
-  );
+    );
+  };
 
   return (
     <div className="panes-layout">
@@ -511,7 +565,10 @@ export default function PanesPage() {
 
       {sortMode === "attention" ? (
         SECTIONS.map(({ status, label }) => {
-          const items = visible.filter((w) => w.status === status);
+          const items = sortWins(
+            visible.filter((w) => w.status === status),
+            "recent",
+          );
           if (!items.length) return null;
           return (
             <section key={status} className="tasks-section">
@@ -833,10 +890,10 @@ export function RestoreBanner({ onRestored }: { onRestored: () => void }) {
   );
 }
 
-// The "New window" launcher: a split control. The primary button opens a plain claude
-// window (the built-in "Claude" profile); the ▾ caret opens a menu of profiles read from
-// ~/.muse/profiles.toml. Picking a profile with declared params opens a tiny form to
-// collect them; params-less profiles launch immediately. Launches land in the current
+// The "New window" launcher: a split control. The primary button launches the last-used
+// built-in provider/profile (default: Claude); the ▾ caret opens built-in providers plus
+// ~/.muse/profiles.toml entries. Picking a profile with declared params opens a tiny form
+// to collect them; params-less profiles launch immediately. Launches land in the current
 // group (handled by the caller). Works on both desktop and mobile.
 export function NewWindowLauncher({
   group,
@@ -852,6 +909,12 @@ export function NewWindowLauncher({
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<Profile | null>(null); // profile awaiting param input
   const [values, setValues] = useState<Record<string, string>>({});
+  const [primary, setPrimary] = useState(() => localStorage.getItem("panesPrimaryProfile") || "Claude");
+
+  const rememberPrimary = (name: string) => {
+    setPrimary(name);
+    localStorage.setItem("panesPrimaryProfile", name);
+  };
 
   const close = () => {
     setOpen(false);
@@ -872,6 +935,7 @@ export function NewWindowLauncher({
   const pick = (p: Profile) => {
     if (p.params.length === 0) {
       close();
+      rememberPrimary(p.name);
       onLaunch(p.name, {});
       return;
     }
@@ -885,14 +949,26 @@ export function NewWindowLauncher({
     if (!form) return;
     const name = form.name;
     close();
+    rememberPrimary(name);
     onLaunch(name, values);
   };
 
+  const builtins = profiles?.filter((p) => p.builtin) ?? [];
+  const customs = profiles?.filter((p) => !p.builtin) ?? [];
+  const primaryLabel = PROVIDER_LABEL[(builtins.find((p) => p.name === primary)?.provider ?? "").toLowerCase()] || primary;
+
   return (
     <div className="task-new-wrap">
-      <button className="task-new" onClick={() => onLaunch("Claude", {})} disabled={busy}>
+      <button
+        className="task-new"
+        onClick={() => {
+          rememberPrimary(primary);
+          onLaunch(primary, {});
+        }}
+        disabled={busy}
+      >
         <span className="task-new-plus">{busy ? "…" : "+"}</span>
-        {busy ? "Starting…" : "New window"}
+        {busy ? "Starting…" : `New ${primaryLabel}`}
       </button>
       <button
         className="task-new-caret"
@@ -948,19 +1024,42 @@ export function NewWindowLauncher({
               <div className="task-move-head">New window from…</div>
               {error && <div className="profile-note profile-note-error">{error}</div>}
               {!error && profiles === null && <div className="profile-note">Loading…</div>}
-              {profiles?.map((p) => (
-                <button
-                  key={p.name}
-                  className="send-menu-row"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    pick(p);
-                  }}
-                >
-                  <span className="send-menu-icon">{p.params.length ? "…" : "▸"}</span>
-                  <span className="send-menu-label">{p.name}</span>
-                </button>
-              ))}
+              {builtins.length > 0 && (
+                <>
+                  <div className="profile-note">Providers</div>
+                  {builtins.map((p) => (
+                    <button
+                      key={p.name}
+                      className="send-menu-row"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        pick(p);
+                      }}
+                    >
+                      <span className="send-menu-icon">{p.params.length ? "…" : "▸"}</span>
+                      <span className="send-menu-label">{p.name}</span>
+                    </button>
+                  ))}
+                </>
+              )}
+              {customs.length > 0 && (
+                <>
+                  <div className="profile-note">Profiles</div>
+                  {customs.map((p) => (
+                    <button
+                      key={p.name}
+                      className="send-menu-row"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        pick(p);
+                      }}
+                    >
+                      <span className="send-menu-icon">{p.params.length ? "…" : "▸"}</span>
+                      <span className="send-menu-label">{p.name}</span>
+                    </button>
+                  ))}
+                </>
+              )}
             </div>
           )}
         </>
@@ -974,6 +1073,7 @@ export function MoveMenu({
   currentSession,
   onMove,
   onMoveNew,
+  onLaunchCodex,
   onRemove,
   triggerClass = "task-move",
   triggerLabel = "⋯",
@@ -983,6 +1083,7 @@ export function MoveMenu({
   currentSession: string;
   onMove: (session: string) => void;
   onMoveNew: () => void;
+  onLaunchCodex?: () => void;
   onRemove?: () => void; // remove (close) this window — a danger row under the move options
   triggerClass?: string;
   triggerLabel?: string;
@@ -1015,7 +1116,7 @@ export function MoveMenu({
             }}
           />
           <div className="send-menu task-move-menu" role="menu">
-            <div className="task-move-head">Move to group</div>
+            <div className="task-move-head">Window actions</div>
             {others.map((g) => (
               <button
                 key={g}
@@ -1041,6 +1142,19 @@ export function MoveMenu({
               <span className="send-menu-icon">+</span>
               <span className="send-menu-label">New group…</span>
             </button>
+            {onLaunchCodex && (
+              <button
+                className="send-menu-row"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  onLaunchCodex();
+                }}
+              >
+                <span className="send-menu-icon">↗</span>
+                <span className="send-menu-label">New Codex here</span>
+              </button>
+            )}
             {onRemove && (
               <button
                 className="send-menu-row danger"
@@ -1071,6 +1185,7 @@ export function TaskRow({
   groups = [],
   onMove,
   onMoveNew,
+  onLaunchCodex,
   onRenameWindow,
   onRemove,
 }: {
@@ -1083,6 +1198,7 @@ export function TaskRow({
   groups?: string[]; // all group (session) names — move targets
   onMove?: (session: string) => void; // move this window into an existing group
   onMoveNew?: () => void; // move this window into a freshly-created group
+  onLaunchCodex?: () => void; // start a Codex session here, seeded from this one
   onRenameWindow?: () => void; // rename this window (hold the name / desktop ✎)
   onRemove?: () => void; // remove (close) this window + optional profile cleanup
 }) {
@@ -1169,6 +1285,7 @@ export function TaskRow({
             currentSession={win.session_name}
             onMove={(s) => onMove?.(s)}
             onMoveNew={() => onMoveNew?.()}
+            onLaunchCodex={onLaunchCodex}
             onRemove={onRemove}
           />
         )}
@@ -1300,6 +1417,7 @@ function PaneDeck({
   groups,
   onMoveWindow,
   onMoveToNewGroup,
+  onLaunchCodex,
   onRenameWindow,
   onRemoveWindow,
 }: {
@@ -1313,6 +1431,7 @@ function PaneDeck({
   groups: string[]; // all group (session) names — move targets for the header menu
   onMoveWindow: (windowId: string, session: string) => void; // recategorize + follow
   onMoveToNewGroup: (windowId: string) => void; // create a group, move, focus it
+  onLaunchCodex: (pane: TmuxPane) => void; // branch a pane into a new Codex session
   onRenameWindow: (windowId: string, currentName: string) => void; // rename a window
   onRemoveWindow: (windowId: string, name: string) => void; // remove (close) a window
 }) {
@@ -1564,6 +1683,7 @@ function PaneDeck({
             groups={groups}
             onMove={(session) => onMoveWindow(p.window_id, session)}
             onMoveNew={() => onMoveToNewGroup(p.window_id)}
+            onLaunchCodex={p.muse_session_id ? () => onLaunchCodex(p) : undefined}
             onRemove={() => onRemoveWindow(p.window_id, p.window_name)}
             onStepPane={stepPane}
             onExit={onBack}
@@ -1623,6 +1743,7 @@ function PaneCard({
   groups = [],
   onMove,
   onMoveNew,
+  onLaunchCodex,
   onRemove,
   onStepPane,
   onExit,
@@ -1635,6 +1756,7 @@ function PaneCard({
   groups?: string[]; // all group (session) names — move targets (desktop header menu)
   onMove?: (session: string) => void; // recategorize this window into an existing group
   onMoveNew?: () => void; // recategorize into a freshly-created group
+  onLaunchCodex?: () => void; // start a Codex session here, seeded from this one
   onRemove?: () => void; // remove (close) this window from the header menu
   onStepPane?: (dir: -1 | 1) => void; // terminal passthrough: Alt+←/→ step panes
   onExit?: () => void; // terminal passthrough: Alt+Esc back to the task list
@@ -1657,6 +1779,13 @@ function PaneCard({
   const screenText = screen?.text || pane.preview || "";
   const options = screen ? screen.options : pane.options;
   const mode = screen?.mode ?? pane.mode;
+  const caps = pane.capabilities;
+  const providerLabel = pane.provider ? (PROVIDER_LABEL[pane.provider] ?? pane.provider) : null;
+  const showRightRail =
+    (mode != null && caps.mode_switch) ||
+    pane.context_pct != null ||
+    pane.queued > 0 ||
+    (!!pane.muse_session_id && caps.drive);
   // Parse ANSI once per screen update (not on every keystroke in the composer).
   const segments = useMemo(() => parseAnsi(screenText), [screenText]);
 
@@ -1666,13 +1795,16 @@ function PaneCard({
   // scroll up, so the whole session is reachable without leaving the deck.
   // Data layer (poll/merge/prepend) lives in useReaderThread — unit-tested.
   const sid = pane.muse_session_id;
-  const showReader = view === "reader" && !!sid;
+  const showReader = view === "reader" && !!sid && caps.reader;
   const { reader, loadEarlier, pullingEarlier } = useReaderThread(sid, showReader && active);
 
   // Rich pending options (full prompt + descriptions + free-text) from the
   // thread-aware endpoint — the screen-parsed chips stay as the fallback for
   // untracked panes and parse gaps. Active card only: one 1.8s poll, not ×8.
-  const { pending, sending, select } = usePendingOptions(sid ?? "", !!sid && active);
+  const { pending, sending, select } = usePendingOptions(
+    sid ?? "",
+    !!sid && active && caps.rich_reply,
+  );
   // Bumped when ReplyBox queues so the chips below refresh instantly.
   const [queueBump, setQueueBump] = useState(0);
   // One-line status banner — only when it says something actionable (a pending
@@ -1682,7 +1814,7 @@ function PaneCard({
   const statusCls = pending ? "wait" : "busy";
   const statusText = pending
     ? "Needs your input — choose below"
-    : "Claude is working — queue a reply or interrupt";
+    : `${providerLabel ?? "Agent"} is working — queue a reply or interrupt`;
   // Distance-from-bottom captured before a prepend, to restore the exact reading
   // position after the earlier items land above the viewport.
   const fromBottom = useRef<number | null>(null);
@@ -1809,7 +1941,7 @@ function PaneCard({
     paneId: pane.pane_id,
     text,
     setText,
-    enabled: !pane.muse_session_id,
+    enabled: !caps.rich_reply && caps.slash_commands,
   });
 
   // Desktop keyboard niceties for the untracked composer (tracked panes get these
@@ -2001,12 +2133,13 @@ function PaneCard({
           {pane.session_name}:{pane.window_index}.{pane.pane_index}
         </span>
         <span className="pane-card-cmd">{pane.command}</span>
+        {providerLabel && <span className={`provider-badge provider-${pane.provider}`}>{providerLabel}</span>}
         <span className="pane-card-cwd" title={pane.cwd}>
           {cwdShort}
         </span>
-        {(mode || pane.muse_session_id || pane.context_pct != null) && (
+        {showRightRail && (
           <span className="pane-card-right">
-            {mode && (
+            {mode && caps.mode_switch && (
               <button
                 className={`pane-card-mode mode-${mode}`}
                 disabled={busy}
@@ -2029,7 +2162,7 @@ function PaneCard({
                 ⏳{pane.queued}
               </span>
             )}
-            {pane.muse_session_id && (
+            {pane.muse_session_id && caps.drive && (
               <Link
                 className="pane-card-drive"
                 to={`/drive/${pane.muse_session_id}`}
@@ -2047,6 +2180,7 @@ function PaneCard({
             currentSession={pane.session_name}
             onMove={onMove}
             onMoveNew={onMoveNew}
+            onLaunchCodex={onLaunchCodex}
             onRemove={onRemove}
             triggerClass="pane-card-move"
             triggerLabel="Move ▾"
@@ -2127,7 +2261,7 @@ function PaneCard({
         </div>
       )}
 
-      {sid && (pending || working) && (
+      {sid && caps.rich_reply && (pending || working) && (
         <div className={`drive-status drive-status-${statusCls}`}>
           <span className="drive-status-dot" />
           {statusText}
@@ -2166,7 +2300,7 @@ function PaneCard({
         )
       )}
 
-      {sid && <QueueChips sessionId={sid} refreshKey={queueBump} enabled={active} />}
+      {sid && caps.queue_replies && <QueueChips sessionId={sid} refreshKey={queueBump} enabled={active} />}
 
       <div className="pane-keybar">
         {KEYBAR.map((cell, i) => {
@@ -2196,16 +2330,15 @@ function PaneCard({
         })}
       </div>
 
-      {sid ? (
-        // Tracked Claude pane: the full cockpit composer — queue-when-ready,
-        // send-to-steer, and Esc-to-interrupt, with its own send/queued/error
-        // state. The backend re-resolves the pane from the session id.
+      {sid && caps.session_reply ? (
+        // Tracked session pane: reply via session id so the backend re-resolves
+        // the live tmux pane. Claude adds queue/pending semantics on top.
         <ReplyBox
           sessionId={sid}
           hasPane
-          busy={working}
+          busy={working && caps.queue_replies}
           variant="cockpit"
-          slashPaneId={pane.pane_id}
+          slashPaneId={caps.slash_commands ? pane.pane_id : undefined}
           // In terminal view, typing passes through to the session (not the composer).
           captureTyping={active && view !== "term"}
           // The key row below already has ⎋ — don't duplicate the interrupt.

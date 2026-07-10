@@ -639,6 +639,7 @@ class SuggestReply(BaseModel):
 class TmuxPane(BaseModel):
     """One pane in the live tmux topology, for the swipeable mobile panes view."""
 
+    provider: Optional[str] = None  # claude | gemini | codex | opencode | None
     pane_id: str
     session_name: str
     window_index: int
@@ -661,6 +662,7 @@ class TmuxPane(BaseModel):
     attention: str = ""  # short reason, e.g. "permission prompt", "working"
     # Claude Code's permission mode (Shift+Tab cycles it); None for non-Claude panes.
     mode: Optional[Literal["default", "acceptEdits", "plan", "bypass"]] = None
+    capabilities: dict[str, bool] = Field(default_factory=dict)
     # Full screen text is heavy (hundreds of KB across a fleet) — it ships only
     # when the client asks (?previews=1); the one-line tail always ships for
     # task-list subtitles. The deck fetches live screens per-pane instead.
