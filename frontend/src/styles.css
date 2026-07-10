@@ -6253,6 +6253,22 @@ body:has(.panes-detail) .navbar { display: none; }
   cursor: pointer;
 }
 .task-pin.pinned { color: var(--warn, #d4a72c); }
+/* Close (kill session): subtle by default so it doesn't shout, reddening on
+   hover/focus/touch to signal it's destructive (a confirm still gates it). */
+.task-close {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 15px;
+  padding: 4px 2px 4px 6px;
+  min-width: 28px;
+  -webkit-tap-highlight-color: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.task-close:hover,
+.task-close:focus-visible,
+.task-close:active { color: var(--danger, #e5534b); }
 .tasks-heading.tasks-pinned { color: var(--warn, #d4a72c); }
 .tasks-noise-toggle {
   width: 100%;

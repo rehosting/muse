@@ -1279,6 +1279,22 @@ export function TaskRow({
             {pinned ? "★" : "☆"}
           </button>
         )}
+        {onRemove && !!win.rep.window_id && (
+          // Always-visible close, not buried in the ⋯ menu — one tap opens the
+          // confirm dialog (RemoveDialog), so it's reachable but never destructive
+          // by accident.
+          <button
+            className="task-close"
+            title={`Close session “${win.window_name || win.session_name}”`}
+            aria-label="Close session"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+          >
+            ✕
+          </button>
+        )}
         {canMove && (
           <MoveMenu
             groups={groups}

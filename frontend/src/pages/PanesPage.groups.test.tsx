@@ -125,6 +125,31 @@ describe("TaskRow move menu", () => {
   });
 });
 
+describe("TaskRow close (✕)", () => {
+  const win = buildWindows([pane({ session_name: "a", window_id: "@7", window_name: "job" })])[0];
+
+  it("shows an always-visible close button that fires onRemove (opens the confirm)", () => {
+    const onRemove = vi.fn();
+    const onOpen = vi.fn();
+    render(<TaskRow win={win} onOpen={onOpen} onRemove={onRemove} />);
+    const btn = screen.getByLabelText("Close session");
+    fireEvent.click(btn);
+    expect(onRemove).toHaveBeenCalledTimes(1);
+    expect(onOpen).not.toHaveBeenCalled(); // click doesn't also open the pane
+  });
+
+  it("omits the close button without onRemove", () => {
+    render(<TaskRow win={win} onOpen={() => {}} />);
+    expect(screen.queryByLabelText("Close session")).toBeNull();
+  });
+
+  it("omits the close button when the window has no id (can't target it)", () => {
+    const w = buildWindows([pane({ session_name: "a", window_id: "" })])[0];
+    render(<TaskRow win={w} onOpen={() => {}} onRemove={() => {}} />);
+    expect(screen.queryByLabelText("Close session")).toBeNull();
+  });
+});
+
 describe("TaskRow rename (desktop ✎)", () => {
   const win = buildWindows([pane({ session_name: "a", window_id: "@7", window_name: "old-name" })])[0];
 
