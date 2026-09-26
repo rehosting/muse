@@ -11,16 +11,19 @@ const SOURCE_BADGE: Record<string, string> = {
  * Renders the choices a live session is presenting as big tappable chips —
  * uniformly across all sources (permission dialog, AskUserQuestion, ExitPlanMode).
  * A `free_text` option opens an inline composer that posts a typed reply instead
- * of a menu pick.
+ * of a menu pick. `onDismiss` (when given) renders a ✕ that hides the row without
+ * answering — screen parsing can misfire, and a false menu must be dismissable.
  */
 export default function OptionPicker({
   pending,
   sending,
   onSelect,
+  onDismiss,
 }: {
   pending: PendingOptions;
   sending: boolean;
   onSelect: (optionId: string, freeText?: string) => void;
+  onDismiss?: () => void;
 }) {
   const [typing, setTyping] = useState<string | null>(null); // option id in free-text mode
   const [freeText, setFreeText] = useState("");
@@ -34,6 +37,16 @@ export default function OptionPicker({
         <span className="option-prompt">{pending.prompt || "Choose an option"}</span>
         {pending.remaining_questions > 0 && (
           <span className="option-more">+{pending.remaining_questions} more after this</span>
+        )}
+        {onDismiss && (
+          <button
+            className="option-dismiss"
+            title="Not a real prompt — hide these"
+            aria-label="Dismiss options"
+            onClick={onDismiss}
+          >
+            ✕
+          </button>
         )}
       </div>
       <div className="option-chips">

@@ -119,3 +119,54 @@ def test_exit_plan_mode_detected():
     assert menu is not None
     assert len(menu.options) == 2
     assert menu.options[0].label == "Yes, proceed"
+
+
+# Claude Code renders AskUserQuestion with a header chip, a description indented
+# under each option, and a rule above the trailing "Chat about this" row — so the
+# numbered rows are NOT adjacent. Captured from a live 2.1.243 pane.
+ASK_USER_QUESTION = """\
+ ☐ Indentation
+Do you prefer tabs or spaces for indentation?
+❯ 1. Spaces
+     Indent with space characters, which render consistently across every editor.
+  2. Tabs
+     Indent with tab characters, letting each reader set their own indent width.
+  3. Match the project
+     Follow whatever the surrounding file or repo config already uses.
+  4. Type something.
+───────────────────────────────────────────────────────────
+  5. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel
+"""
+
+
+def test_parse_ask_user_question_with_descriptions_between_rows():
+    menu = parse_permission_menu(ASK_USER_QUESTION)
+    assert menu is not None  # regression: description lines used to break the block
+    assert [o.label for o in menu.options] == [
+        "Spaces", "Tabs", "Match the project", "Type something.", "Chat about this",
+    ]
+    assert menu.current_index == 0
+    assert menu.options[0].description.startswith("Indent with space characters")
+    # The header chip is not the question, and the rule/footer are not descriptions.
+    assert menu.prompt == "Do you prefer tabs or spaces for indentation?"
+    assert menu.options[4].description is None
+
+
+def test_description_capture_ignores_unindented_following_lines():
+    text = "Pick one\n❯ 1. Alpha\n     details for alpha\n  2. Beta\nnot a description\n"
+    menu = parse_permission_menu(text)
+    assert menu.options[0].description == "details for alpha"
+    assert menu.options[1].description is None  # left-aligned line isn't indented under it
+
+
+def test_gapped_prose_numbers_still_rejected():
+    # Numbers spread across ordinary output, no ❯ cursor anywhere.
+    text = "Plan:\n1. one\n\n   blah\n2. two\n\n   blah\n3. three\n"
+    assert parse_permission_menu(text) is None
+
+
+def test_far_apart_numbers_are_not_one_menu():
+    filler = "\n".join(f"line {i}" for i in range(10))
+    text = f"❯ 1. Alpha\n{filler}\n  2. Beta\n"
+    assert parse_permission_menu(text) is None
