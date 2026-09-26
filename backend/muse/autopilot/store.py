@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from .. import db
-from ..models import AutopilotConfig, AutopilotLogEntry, QueuedReply
+from ..models import AutopilotConfig, AutopilotLogEntry, QueuedReply, ScheduledJob
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS autopilot_config (
@@ -47,6 +47,21 @@ CREATE TABLE IF NOT EXISTS reply_queue (
 );
 CREATE INDEX IF NOT EXISTS reply_queue_pending
     ON reply_queue(session_id) WHERE status = 'pending';
+CREATE TABLE IF NOT EXISTS scheduled_jobs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL DEFAULT '',
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    at_time       TEXT NOT NULL DEFAULT '',        -- "HH:MM" local (daily shape)
+    days          TEXT NOT NULL DEFAULT '0,1,2,3,4,5,6',  -- weekday numbers, Mon=0
+    every_minutes INTEGER NOT NULL DEFAULT 0,      -- > 0 → interval shape
+    command       TEXT NOT NULL,
+    cwd           TEXT NOT NULL DEFAULT '',
+    group_name    TEXT NOT NULL DEFAULT '',
+    window_name   TEXT NOT NULL DEFAULT '',
+    last_run_at   TEXT,
+    last_status   TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tmux_snapshots (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     ts            TEXT NOT NULL,   -- when captured (ISO)
@@ -54,6 +69,24 @@ CREATE TABLE IF NOT EXISTS tmux_snapshots (
     snapshot_json TEXT NOT NULL    -- serialized {ts, groups:[...]}
 );
 """
+
+
+def _job_from_row(row: sqlite3.Row) -> ScheduledJob:
+    return ScheduledJob(
+        id=row["id"],
+        name=row["name"],
+        enabled=bool(row["enabled"]),
+        at_time=row["at_time"],
+        days=row["days"],
+        every_minutes=row["every_minutes"],
+        command=row["command"],
+        cwd=row["cwd"],
+        group_name=row["group_name"],
+        window_name=row["window_name"],
+        last_run_at=row["last_run_at"],
+        last_status=row["last_status"],
+    )
+
 
 # Columns added after the initial release (migrate existing DBs).
 _MIGRATIONS = [
@@ -157,6 +190,93 @@ class AutopilotStore:
                 "SELECT sig, snapshot_json FROM tmux_snapshots ORDER BY id DESC LIMIT 1"
             ).fetchone()
         return (row["sig"], row["snapshot_json"]) if row else None
+
+    def recent_snapshots(self, limit: int = 20) -> list[tuple[str, str]]:
+        """Newest-first (sig, snapshot_json) from the history ring. Restore reads the
+        whole ring, not just the newest row: the first capture after a reboot sees only
+        the one window you started by hand, and that thin row must not be mistaken for
+        the last-known-good topology."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT sig, snapshot_json FROM tmux_snapshots ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [(r["sig"], r["snapshot_json"]) for r in rows]
+
+    # --- scheduled jobs (clock-driven launches) ------------------------------
+    def list_jobs(self) -> list[ScheduledJob]:
+        """All jobs, newest first. Small table; no pagination."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM scheduled_jobs ORDER BY id DESC"
+            ).fetchall()
+        return [_job_from_row(r) for r in rows]
+
+    def get_job(self, job_id: int) -> Optional[ScheduledJob]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM scheduled_jobs WHERE id=?", (job_id,)
+            ).fetchone()
+        return _job_from_row(row) if row else None
+
+    def add_job(self, job: ScheduledJob) -> ScheduledJob:
+        def _do() -> int:
+            with self._lock:
+                cur = self._conn.execute(
+                    "INSERT INTO scheduled_jobs(name, enabled, at_time, days, every_minutes,"
+                    " command, cwd, group_name, window_name, created_at)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        job.name, 1 if job.enabled else 0, job.at_time, job.days,
+                        job.every_minutes, job.command, job.cwd, job.group_name,
+                        job.window_name, _now(),
+                    ),
+                )
+                self._conn.commit()
+                return int(cur.lastrowid or 0)
+
+        return self.get_job(db.retry_locked(_do)) or job
+
+    def update_job(self, job_id: int, job: ScheduledJob) -> Optional[ScheduledJob]:
+        def _do() -> None:
+            with self._lock:
+                self._conn.execute(
+                    "UPDATE scheduled_jobs SET name=?, enabled=?, at_time=?, days=?,"
+                    " every_minutes=?, command=?, cwd=?, group_name=?, window_name=?"
+                    " WHERE id=?",
+                    (
+                        job.name, 1 if job.enabled else 0, job.at_time, job.days,
+                        job.every_minutes, job.command, job.cwd, job.group_name,
+                        job.window_name, job_id,
+                    ),
+                )
+                self._conn.commit()
+
+        db.retry_locked(_do)
+        return self.get_job(job_id)
+
+    def delete_job(self, job_id: int) -> bool:
+        def _do() -> int:
+            with self._lock:
+                cur = self._conn.execute("DELETE FROM scheduled_jobs WHERE id=?", (job_id,))
+                self._conn.commit()
+                return cur.rowcount
+
+        return db.retry_locked(_do) > 0
+
+    def mark_job_run(self, job_id: int, when: str, status: str) -> None:
+        """Stamp the occurrence that just fired. Written BEFORE the launch is
+        attempted, so a tmux failure can't turn into a retry storm on every tick."""
+
+        def _do() -> None:
+            with self._lock:
+                self._conn.execute(
+                    "UPDATE scheduled_jobs SET last_run_at=?, last_status=? WHERE id=?",
+                    (when, status[:200], job_id),
+                )
+                self._conn.commit()
+
+        db.retry_locked(_do)
 
     # --- active-hours schedule ---------------------------------------------
     def get_schedule(self) -> tuple[bool, int, int]:

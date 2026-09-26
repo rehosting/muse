@@ -746,6 +746,16 @@ export interface PersistedOutput {
   truncated: boolean;
 }
 
+// One page of a file's live on-disk bytes (GET /api/file). next_offset is the byte
+// offset of the following page, or null when the file has been fully read.
+export interface FileView {
+  path: string;
+  size: number;
+  offset: number;
+  content: string;
+  next_offset: number | null;
+}
+
 export interface NotifyConfig {
   enabled: boolean;
   provider: string;
@@ -771,6 +781,7 @@ export interface PendingOption {
 }
 
 export interface TmuxPane {
+  provider: "claude" | "gemini" | "codex" | "opencode" | null;
   pane_id: string;
   session_name: string;
   window_index: number;
@@ -790,6 +801,15 @@ export interface TmuxPane {
   status: "needs_you" | "responded" | "working" | "idle";
   attention: string;
   mode: "default" | "acceptEdits" | "plan" | "bypass" | null;
+  capabilities: {
+    mode_switch: boolean;
+    session_reply: boolean;
+    rich_reply: boolean;
+    queue_replies: boolean;
+    reader: boolean;
+    drive: boolean;
+    slash_commands: boolean;
+  };
   preview: string; // full visible screen (ANSI); empty when polled with previews=0
   preview_tail: string; // last visible line — task-list subtitle
   options: PendingOption[];
@@ -825,10 +845,11 @@ export interface ProfileParam {
 /** A launch profile from ~/.muse/profiles.toml: a template for opening a new window. */
 export interface Profile {
   name: string;
+  provider: string;
   cwd: string;
   command: string;
   params: ProfileParam[];
-  builtin: boolean; // the always-present "Claude" default
+  builtin: boolean; // one of muse's always-present built-ins
 }
 
 /** One window in a saved layout snapshot (for session-restore after a reboot). */
@@ -991,4 +1012,61 @@ export interface FileChange {
   first_ts: string | null;
   last_ts: string | null;
   ops: FileOp[];
+}
+
+
+/** Token usage as reported by the tokentracker CLI (see backend/muse/tokentracker.py).
+ * The nested shapes are the tool's own schema, passed through rather than remapped, so
+ * fields are optional: a new tracker version may add or drop keys without breaking us. */
+export interface TokenSummary {
+  sessions?: number;
+  cost_usd?: number;
+  total_tokens?: number;
+  edit_turns?: number;
+  retries?: number;
+  cost_per_edit?: number;
+  first_pass_rate?: number;
+  productive_rate?: number;
+}
+
+export interface TokenModelRow {
+  model: string;
+  sessions: number;
+  total_tokens?: number;
+  cost_usd?: number;
+  edit_turns?: number;
+  first_pass_rate?: number;
+}
+
+export interface TokenSubagentRow {
+  name: string;
+  calls: number;
+  sessions: number;
+  total_tokens?: number;
+  cost_usd?: number;
+}
+
+export interface TokenSessionRow {
+  session_hash: string;
+  source: string;
+  project_key?: string;
+  model?: string;
+  started_at?: string;
+  turns?: number;
+  edit_turns?: number;
+  total_tokens?: number;
+  cost_usd?: number;
+}
+
+export interface TokenUsage {
+  days: number;
+  refreshed: boolean;
+  generated_at: string;
+  available: boolean;
+  session_count: number;
+  summary: TokenSummary;
+  by_model: TokenModelRow[];
+  subagents: TokenSubagentRow[];
+  sessions: TokenSessionRow[];
+  provenance: { privacy?: string; source?: string; methodology?: string };
 }

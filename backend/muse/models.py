@@ -639,6 +639,7 @@ class SuggestReply(BaseModel):
 class TmuxPane(BaseModel):
     """One pane in the live tmux topology, for the swipeable mobile panes view."""
 
+    provider: Optional[str] = None  # claude | gemini | codex | opencode | None
     pane_id: str
     session_name: str
     window_index: int
@@ -661,6 +662,7 @@ class TmuxPane(BaseModel):
     attention: str = ""  # short reason, e.g. "permission prompt", "working"
     # Claude Code's permission mode (Shift+Tab cycles it); None for non-Claude panes.
     mode: Optional[Literal["default", "acceptEdits", "plan", "bypass"]] = None
+    capabilities: dict[str, bool] = Field(default_factory=dict)
     # Full screen text is heavy (hundreds of KB across a fleet) — it ships only
     # when the client asks (?previews=1); the one-line tail always ships for
     # task-list subtitles. The deck fetches live screens per-pane instead.
@@ -760,6 +762,7 @@ class Annotations(BaseModel):
     bookmarks: list[Bookmark] = Field(default_factory=list)
 
 
+
 # --- Investigations: AI/user-authored markup documents that reference sessions --
 # An Investigation is muse-owned (lives in ~/.muse/muse.db, never ~/.claude). It
 # holds prose plus references that point into real sessions/messages; references
@@ -850,6 +853,41 @@ class LiveSession(BaseModel):
 
 ContextAction = Literal["none", "compact", "clear", "message", "stop"]
 IdleMode = Literal["message", "suggestion", "ai"]
+
+
+class ScheduledJob(BaseModel):
+    """A job muse launches on a clock (see autopilot/schedule.py).
+
+    Either `at_time` + `days` (daily at a local wall-clock time) or `every_minutes`
+    (repeating interval). `command` is the shell line the new tmux window runs."""
+
+    id: int = 0
+    name: str = ""
+    enabled: bool = True
+    at_time: str = ""  # "HH:MM" local; ignored when every_minutes > 0
+    days: str = "0,1,2,3,4,5,6"  # weekday numbers, Mon=0
+    every_minutes: int = 0  # > 0 selects the interval shape
+    command: str = ""
+    cwd: str = ""
+    group_name: str = ""  # tmux session to launch into ("" → "jobs")
+    window_name: str = ""
+    last_run_at: Optional[str] = None
+    last_status: str = ""
+    next_run_at: Optional[str] = None  # derived for display, not stored
+
+
+class ScheduledJobInput(BaseModel):
+    """Create/update payload. Everything but `command` has a usable default."""
+
+    name: str = ""
+    enabled: bool = True
+    at_time: str = ""
+    days: str = "0,1,2,3,4,5,6"
+    every_minutes: int = 0
+    command: str
+    cwd: str = ""
+    group_name: str = ""
+    window_name: str = ""
 
 
 class AutopilotConfig(BaseModel):
