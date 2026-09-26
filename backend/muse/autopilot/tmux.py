@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 
 
 def _run(args: list[str], timeout: float = 5.0, input: str | None = None) -> tuple[int, str, str]:
@@ -58,6 +59,7 @@ def list_layout() -> list[dict]:
             "#{pane_index}",
             "#{pane_active}",
             "#{pane_current_command}",
+            "#{pane_start_command}",
             "#{pane_current_path}",
             "#{pane_title}",
             "#{session_attached}",
@@ -71,7 +73,7 @@ def list_layout() -> list[dict]:
     panes: list[dict] = []
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) != 13:
+        if len(parts) != 14:
             continue
         try:
             panes.append(
@@ -84,14 +86,15 @@ def list_layout() -> list[dict]:
                     "pane_index": int(parts[5]),
                     "pane_active": parts[6] == "1",
                     "command": parts[7],
-                    "cwd": parts[8],
-                    "title": parts[9],
-                    "session_attached": parts[10] != "0",
+                    "start_command": parts[8],
+                    "cwd": parts[9],
+                    "title": parts[10],
+                    "session_attached": parts[11] != "0",
                     # Epoch secs of last activity in this window — for most-recent sort.
-                    "last_activity": int(parts[11]) if parts[11].isdigit() else 0,
+                    "last_activity": int(parts[12]) if parts[12].isdigit() else 0,
                     # Stable window handle (@<n>) — survives index shifts, so it's the
                     # safe target for move-window.
-                    "window_id": parts[12],
+                    "window_id": parts[13],
                 }
             )
         except ValueError:
@@ -217,6 +220,10 @@ def send_text(pane_id: str, text: str, submit: bool = True) -> tuple[bool, str]:
     if code != 0:
         return False, err or "send-keys failed"
     if submit:
+        # Some TUIs (notably Codex) can drop an immediate synthetic Enter sent in
+        # the same instant as a literal paste. Give the app one frame to ingest
+        # the text before submitting it.
+        time.sleep(0.05)
         code, _, err = _run(["send-keys", "-t", pane_id, "Enter"])
         if code != 0:
             return False, err or "enter failed"
@@ -237,6 +244,7 @@ def paste_text(pane_id: str, text: str, submit: bool = True) -> tuple[bool, str]
     if code != 0:
         return False, err or "paste-buffer failed"
     if submit:
+        time.sleep(0.05)
         code, _, err = _run(["send-keys", "-t", pane_id, "Enter"])
         if code != 0:
             return False, err or "enter failed"

@@ -8,23 +8,82 @@ vi.mock("../api/client", () => ({
   api: { listProfiles: vi.fn(), launchProfile: vi.fn() },
 }));
 import { api } from "../api/client";
-import { NewWindowLauncher } from "./PanesPage";
-import type { Profile } from "../api/types";
+import { NewWindowLauncher, waitForPane } from "./PanesPage";
+import type { Profile, TmuxLayout } from "../api/types";
 
 function profile(over: Partial<Profile>): Profile {
-  return { name: "p", cwd: "~", command: "claude", params: [], builtin: false, ...over };
+  return {
+    name: "p",
+    provider: "claude",
+    cwd: "~",
+    command: "claude",
+    params: [],
+    builtin: false,
+    ...over,
+  };
 }
 
 beforeEach(() => {
+  localStorage.clear();
   vi.mocked(api.listProfiles).mockReset();
   vi.mocked(api.launchProfile).mockReset();
 });
 
 describe("NewWindowLauncher", () => {
-  it("launches the built-in Claude profile from the primary button", () => {
+  it("waits briefly for a launched pane to appear in tmux layout", async () => {
+    const layouts: TmuxLayout[] = [
+      { available: true, panes: [], reason: null },
+      {
+        available: true,
+        panes: [
+          {
+            provider: "codex",
+            pane_id: "%9",
+            session_name: "main",
+            window_index: 0,
+            window_id: "@9",
+            window_name: "Codex",
+            window_active: true,
+            pane_index: 0,
+            pane_active: true,
+            command: "node",
+            cwd: "/tmp",
+            title: "",
+            session_attached: true,
+            last_activity: 0,
+            muse_session_id: null,
+            context_pct: null,
+            queued: 0,
+            status: "idle",
+            attention: "",
+            mode: null,
+            capabilities: {
+              mode_switch: false,
+              session_reply: false,
+              rich_reply: false,
+              queue_replies: false,
+              reader: false,
+              drive: false,
+              slash_commands: false,
+            },
+            preview: "",
+            preview_tail: "",
+            options: [],
+          },
+        ],
+        reason: null,
+      },
+    ];
+    let calls = 0;
+    const fresh = await waitForPane(async () => layouts[calls++] ?? layouts[layouts.length - 1], "%9", 3, 0);
+    expect(calls).toBe(2);
+    expect(fresh.panes[0].pane_id).toBe("%9");
+  });
+
+  it("launches the default built-in provider from the primary button", () => {
     const onLaunch = vi.fn();
     render(<NewWindowLauncher group={null} busy={false} onLaunch={onLaunch} />);
-    fireEvent.click(screen.getByText("New window"));
+    fireEvent.click(screen.getByText("New Claude"));
     expect(onLaunch).toHaveBeenCalledWith("Claude", {});
     expect(api.listProfiles).not.toHaveBeenCalled(); // no menu fetch for the fast path
   });
@@ -32,11 +91,14 @@ describe("NewWindowLauncher", () => {
   it("opens the caret menu, lists profiles, and launches a params-less one immediately", async () => {
     vi.mocked(api.listProfiles).mockResolvedValue([
       profile({ name: "Claude", builtin: true }),
+      profile({ name: "Gemini", provider: "gemini", command: "antigravity", builtin: true }),
       profile({ name: "web", command: "npm run dev & claude" }),
     ]);
     const onLaunch = vi.fn();
     render(<NewWindowLauncher group={null} busy={false} onLaunch={onLaunch} />);
     fireEvent.click(screen.getByTitle("Launch a profile"));
+    expect(await screen.findByText("Providers")).toBeTruthy();
+    expect(screen.getByText("Profiles")).toBeTruthy();
     fireEvent.click(await screen.findByText("web"));
     expect(onLaunch).toHaveBeenCalledWith("web", {});
   });

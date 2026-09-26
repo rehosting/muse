@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 import time
 from collections import OrderedDict
@@ -246,6 +247,10 @@ class SessionService:
                 return
             self._sessions_refreshing = True
         threading.Thread(target=self._bg_rebuild_sessions, daemon=True).start()
+
+    def refresh_sessions_soon(self) -> None:
+        """Public nudge for routes that know session artifacts may have changed."""
+        self._kick_sessions_refresh()
 
     def _bg_rebuild_sessions(self) -> None:
         try:
@@ -1660,6 +1665,26 @@ class SessionService:
         if not roots:
             return None
         return artifacts.read_artifact(roots, path, offset, limit)
+
+    def _file_view_roots(self) -> list[Path]:
+        """Allowed read roots for the click-to-view file endpoint: every project the
+        user actually works in (so any file a session referenced/changed is reachable),
+        ~/.claude (plans, CLAUDE.md, projects/), and the agent scratchpad base
+        (/tmp/claude-<uid>/…, where sessions Write HTML/notes/etc.). Broad enough for
+        referenced files, still an allowlist — arbitrary paths like /etc/passwd or ../
+        escapes are refused by artifacts.read_artifact's containment check."""
+        roots = [Path(c) for c in {s.project_cwd for s in self.list_sessions() if s.project_cwd}]
+        roots.append(get_settings().claude_dir)
+        scratch = Path(tempfile.gettempdir()) / f"claude-{os.getuid()}"
+        if scratch.is_dir():
+            roots.append(scratch)
+        return roots
+
+    def read_file(self, path: str, offset: int = 0, limit: int = 40000) -> dict:
+        """Read one file's live on-disk bytes (paginated) if it resolves inside a known
+        project dir or ~/.claude — the click-to-view file viewer. Returns
+        {path,size,offset,content,next_offset} or {error}."""
+        return artifacts.read_artifact(self._file_view_roots(), path, offset, limit)
 
     def build_session_digest(
         self, session_id: str, max_context_tokens: int = 16000

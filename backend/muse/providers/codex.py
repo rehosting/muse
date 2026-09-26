@@ -44,6 +44,8 @@ _PREFIX = "codex:"
 _TOOL_INPUT_KEYS = ("command", "file_path", "path", "query", "url", "cmd")
 # per-file summary cache keyed by path -> (mtime, SessionSummary)
 _summary_cache: dict[str, tuple[float, SessionSummary]] = {}
+# per-file context cache keyed by path -> (mtime, context_pct)
+_context_cache: dict[str, tuple[float, Optional[float]]] = {}
 
 
 def _ts(value: Any) -> Optional[datetime]:
@@ -202,6 +204,49 @@ def _meta(raw: list[dict]) -> dict[str, Any]:
         if cwd and model and context_window:
             break
     return {"cwd": cwd, "model": model, "version": version, "context_window": context_window}
+
+
+def context_pct(session_id: str) -> Optional[float]:
+    """Live Codex context occupancy for tmux panes.
+
+    Codex emits `token_count` event_msgs where `last_token_usage` describes the
+    latest prompt footprint and `model_context_window` gives the active model's
+    window. We read the newest such event and cache by rollout mtime."""
+    loaded = _load_raw(session_id)
+    if loaded is None:
+        return None
+    path, raw = loaded
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    cached = _context_cache.get(str(path))
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    pct: Optional[float] = None
+    fallback_window = _meta(raw).get("context_window")
+    for obj in reversed(raw):
+        if obj.get("type") != "event_msg":
+            continue
+        p = obj.get("payload") or {}
+        if p.get("type") != "token_count":
+            continue
+        info = p.get("info") or {}
+        if not isinstance(info, dict):
+            continue
+        last = info.get("last_token_usage") or {}
+        if not isinstance(last, dict):
+            continue
+        input_tokens = last.get("input_tokens")
+        window = info.get("model_context_window") or p.get("model_context_window") or fallback_window
+        if not isinstance(input_tokens, (int, float)) or not isinstance(window, (int, float)) or window <= 0:
+            continue
+        pct = max(0.0, min(100.0, float(input_tokens) * 100.0 / float(window)))
+        break
+
+    _context_cache[str(path)] = (mtime, pct)
+    return pct
 
 
 def _build_items(raw: list[dict]) -> tuple[list[ThreadItem], dict[str, ToolResult], dict[str, str]]:

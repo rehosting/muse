@@ -278,7 +278,7 @@ class AIWorker(threading.Thread):
         self.store = store
         self.execute = execute
         self._wake = threading.Event()
-        self._stop = threading.Event()
+        self._stopping = threading.Event()  # NOT _stop: that shadows Thread._stop, which join() calls
         self._running_id: Optional[str] = None
         self.on_cancel_running: Optional[Callable[[], bool]] = None
 
@@ -286,7 +286,7 @@ class AIWorker(threading.Thread):
         self._wake.set()
 
     def stop(self, timeout: float = 5.0) -> None:
-        self._stop.set()
+        self._stopping.set()
         if self.on_cancel_running:
             self.on_cancel_running()
         self._wake.set()
@@ -298,7 +298,7 @@ class AIWorker(threading.Thread):
         return self.on_cancel_running()
 
     def run(self) -> None:  # pragma: no cover - thread loop; pieces tested directly
-        while not self._stop.is_set():
+        while not self._stopping.is_set():
             job = self.store.claim_next()
             if job is None:
                 self._wake.wait(timeout=5.0)

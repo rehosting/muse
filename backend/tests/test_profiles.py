@@ -1,5 +1,5 @@
 """Launch profiles: hand-authored templates (~/.muse/profiles.toml) for opening a new
-tmux window. profiles.load_profiles parses + validates the TOML (built-in default first);
+tmux window. profiles.load_profiles parses + validates the TOML (built-ins first);
 render() substitutes {key} params (shell-quoted into the command, raw into the cwd); the
 router launches via tmux.new_window into the current group (or the default session)."""
 
@@ -27,10 +27,16 @@ def profiles_file(tmp_path, monkeypatch):
 # --- load_profiles ----------------------------------------------------------------
 
 
-def test_no_file_yields_only_builtin_default(profiles_file):
+def test_no_file_yields_builtin_provider_profiles(profiles_file):
     got = profiles.load_profiles()
-    assert [p.name for p in got] == ["Claude"]
-    assert got[0].builtin and got[0].command == "claude"
+    assert [p.name for p in got] == ["Claude", "Gemini", "Codex", "OpenCode"]
+    assert [(p.provider, p.command) for p in got] == [
+        ("claude", "claude"),
+        ("gemini", "antigravity"),
+        ("codex", "codex"),
+        ("opencode", "opencode"),
+    ]
+    assert all(p.builtin for p in got)
 
 
 def test_parses_profiles_default_first_in_file_order(profiles_file):
@@ -49,8 +55,8 @@ def test_parses_profiles_default_first_in_file_order(profiles_file):
         """
     )
     got = profiles.load_profiles()
-    assert [p.name for p in got] == ["Claude", "igloo dev", "web"]
-    igloo = got[1]
+    assert [p.name for p in got] == ["Claude", "Gemini", "Codex", "OpenCode", "igloo dev", "web"]
+    igloo = got[4]
     assert igloo.params[0].key == "issue" and igloo.params[0].default == ""
     assert not igloo.builtin
 
@@ -65,8 +71,23 @@ def test_file_profile_named_claude_overrides_builtin(profiles_file):
         """
     )
     got = profiles.load_profiles()
-    assert [p.name for p in got] == ["Claude"]  # not duplicated
+    assert [p.name for p in got][:4] == ["Claude", "Gemini", "Codex", "OpenCode"]
     assert got[0].command == "claude --resume" and not got[0].builtin
+
+
+def test_file_profile_named_gemini_overrides_builtin_in_place(profiles_file):
+    profiles_file(
+        """
+        [[profile]]
+        name = "Gemini"
+        provider = "gemini"
+        cwd = "~/work"
+        command = "antigravity --resume"
+        """
+    )
+    got = profiles.load_profiles()
+    assert [p.name for p in got][:4] == ["Claude", "Gemini", "Codex", "OpenCode"]
+    assert got[1].command == "antigravity --resume" and not got[1].builtin
 
 
 @pytest.mark.parametrize(
@@ -202,11 +223,20 @@ class FakeStore:
         self.entries.append((sid, action, detail))
 
 
+class FakeService:
+    def __init__(self):
+        self.refreshes = 0
+
+    def refresh_sessions_soon(self):
+        self.refreshes += 1
+
+
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     app = FastAPI()
     app.include_router(tmux_router.router)
     app.state.autopilot = type("AP", (), {"store": FakeStore()})()
+    app.state.service = FakeService()
 
     calls: list[tuple] = []
     monkeypatch.setattr(tmux_router.tmux, "available", lambda: True)
@@ -219,13 +249,14 @@ def client(monkeypatch, tmp_path):
     )
     c = TestClient(app)
     c.calls = calls
+    c.service = app.state.service
     return c
 
 
 def test_list_profiles_includes_builtin(client, profiles_file):
     r = client.get("/api/tmux/profiles")
     assert r.status_code == 200
-    assert [p["name"] for p in r.json()] == ["Claude"]
+    assert [p["name"] for p in r.json()] == ["Claude", "Gemini", "Codex", "OpenCode"]
 
 
 def test_list_profiles_surfaces_broken_config(client, profiles_file):
@@ -240,6 +271,7 @@ def test_launch_default_profile_uses_default_session(client, profiles_file):
     home = __import__("os").path.expanduser("~")
     # No params → the window is labelled with the profile name.
     assert client.calls == [(home, "claude", "main", "Claude")]
+    assert client.service.refreshes == 1
 
 
 def test_launch_renders_params_and_targets_group(client, profiles_file, tmp_path):

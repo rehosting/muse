@@ -26,6 +26,22 @@ describe("MoveMenu Remove row", () => {
     fireEvent.click(screen.getByTitle("Move to a group"));
     expect(screen.queryByText("Remove session…")).toBeNull();
   });
+
+  it("renders a New Codex row only when onLaunchCodex is provided, and fires it", () => {
+    const onLaunchCodex = vi.fn();
+    render(
+      <MoveMenu
+        groups={["a", "b"]}
+        currentSession="a"
+        onMove={() => {}}
+        onMoveNew={() => {}}
+        onLaunchCodex={onLaunchCodex}
+      />,
+    );
+    fireEvent.click(screen.getByTitle("Move to a group"));
+    fireEvent.click(screen.getByText("New Codex here"));
+    expect(onLaunchCodex).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("RemoveDialog", () => {

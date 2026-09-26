@@ -41,6 +41,7 @@ class ProfileParam(BaseModel):
 class Profile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
+    provider: str = "claude"  # claude | gemini | codex | opencode | shell-ish custom
     cwd: str = "~"
     command: str = "claude"
     params: list[ProfileParam] = []
@@ -52,9 +53,14 @@ class Profile(BaseModel):
     builtin: bool = False
 
 
-# Always available so "New window" works with no config file. A file profile named
-# "Claude" (case-insensitive) overrides this.
-DEFAULT_PROFILE = Profile(name="Claude", cwd="~", command="claude", builtin=True)
+# Always available so "New window" works with no config file. A file profile with the
+# same name (case-insensitive) overrides the matching built-in.
+BUILTIN_PROFILES = [
+    Profile(name="Claude", provider="claude", cwd="~", command="claude", builtin=True),
+    Profile(name="Gemini", provider="gemini", cwd="~", command="antigravity", builtin=True),
+    Profile(name="Codex", provider="codex", cwd="~", command="codex", builtin=True),
+    Profile(name="OpenCode", provider="opencode", cwd="~", command="opencode", builtin=True),
+]
 
 
 def profiles_path() -> Path:
@@ -75,7 +81,7 @@ def load_profiles() -> list[Profile]:
     an actionable message instead of silently doing nothing."""
     path = profiles_path()
     if not path.exists():
-        return [DEFAULT_PROFILE]
+        return BUILTIN_PROFILES[:]
 
     try:
         data = tomllib.loads(path.read_text())
@@ -101,11 +107,16 @@ def load_profiles() -> list[Profile]:
         seen.add(low)
         file_profiles.append(p)
 
-    # File wins: only prepend the built-in default when the file doesn't define "Claude".
     out: list[Profile] = []
-    if DEFAULT_PROFILE.name.lower() not in seen:
-        out.append(DEFAULT_PROFILE)
-    out.extend(file_profiles)
+    by_name = {p.name.lower(): p for p in file_profiles}
+    consumed: set[str] = set()
+    for builtin in BUILTIN_PROFILES:
+        low = builtin.name.lower()
+        chosen = by_name.get(low, builtin)
+        out.append(chosen)
+        if low in by_name:
+            consumed.add(low)
+    out.extend(p for p in file_profiles if p.name.lower() not in consumed)
     return out
 
 
