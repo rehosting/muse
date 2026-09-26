@@ -37,6 +37,8 @@ from .routers import (
     notify,
     options,
     queue,
+    schedules,
+    tokens,
     sessions,
     stream,
     tmux,
@@ -170,6 +172,8 @@ def create_app() -> FastAPI:
     app.include_router(interact.router)
     app.include_router(options.router)
     app.include_router(queue.router)
+    app.include_router(schedules.router)
+    app.include_router(tokens.router)
     app.include_router(hooks.router)
     app.include_router(tmux.router)
     app.include_router(auth.router)

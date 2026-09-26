@@ -36,6 +36,7 @@ import type {
   Pack,
   LayoutSnapshot,
   PersistedOutput,
+  FileView,
   Profile,
   ReentryBrief,
   RelatedSession,
@@ -48,6 +49,7 @@ import type {
   StatsResponse,
   Thread,
   ThreadWindowOpts,
+  TokenUsage,
 } from "./types";
 
 function notifyAuthRequired(status: number): void {
@@ -135,6 +137,11 @@ export const api = {
     getJSON<PersistedOutput>(
       `/api/sessions/${sessionId}/tool-results/${cacheId}?offset=${offset}`,
     ),
+
+  // Live on-disk bytes of a referenced/changed file (click-to-view). Guarded server-side
+  // to the indexed project dirs + ~/.claude; paginated (next_offset when more remains).
+  readFile: (path: string, offset = 0) =>
+    getJSON<FileView>(`/api/file?path=${encodeURIComponent(path)}&offset=${offset}`),
 
   streamUrl: (sessionId: string) => `/api/sessions/${sessionId}/stream`,
 
@@ -366,6 +373,11 @@ export const api = {
   // --- tmux topology (mobile panes view) ---
   // previews=false omits per-pane screen text (~250KB across a fleet) — the
   // task list polls that shape; the deck uses getPaneScreen for live terminals.
+  /** Token usage from the tokentracker CLI. `refresh` re-parses transcripts (~10s) —
+   * user-initiated only; the default read comes from the tracker's own cache. */
+  getTokenUsage: (days = 7, refresh = false, signal?: AbortSignal) =>
+    getJSON<TokenUsage>(`/api/tokens?days=${days}&refresh=${refresh ? 1 : 0}`, signal),
+
   getTmuxLayout: (previews = true, signal?: AbortSignal) =>
     getJSON<TmuxLayout>(`/api/tmux/layout?previews=${previews ? 1 : 0}`, signal),
 
@@ -417,6 +429,19 @@ export const api = {
       "POST",
       `/api/tmux/profiles/${encodeURIComponent(name)}/launch`,
       { values, session: session ?? null },
+    ),
+
+  launchCodexFromSession: (body: {
+    source_session_id: string;
+    cwd: string;
+    session?: string | null;
+    window_name?: string;
+    prompt?: string;
+  }) =>
+    sendJSON<{ ok: boolean; pane_id: string; pack_id: string | null }>(
+      "POST",
+      "/api/tmux/codex/launch",
+      body,
     ),
 
   // --- session restore (rebuild the tmux layout after a reboot) ---

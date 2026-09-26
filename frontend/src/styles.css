@@ -1548,6 +1548,18 @@ body.resizing {
 .cc-tool-arg {
   color: var(--text-dim);
 }
+/* File-path arg rendered as a click-to-view target (button reset to match the text). */
+button.cc-file-link {
+  font: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--accent);
+}
+button.cc-file-link:hover {
+  text-decoration: underline;
+}
 .cc-result {
   margin: 2px 0 2px 14px;
   display: flex;
@@ -5444,6 +5456,23 @@ body:has(.panes-detail) .navbar { display: none; }
 }
 .option-prompt { font-weight: 600; }
 .option-more { font-size: 12px; color: var(--text-dim); }
+/* Escape hatch for a misparsed menu: pushed to the far right of the head row so
+   it never sits under a thumb reaching for the first option chip. */
+.option-dismiss {
+  margin-left: auto;
+  flex: none;
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.option-dismiss:hover { color: var(--text); border-color: var(--text-dim); }
+.option-dismiss-chips { align-self: flex-end; margin-left: 0; }
 .option-chips { display: flex; flex-direction: column; gap: 8px; }
 .option-chip {
   display: flex;
@@ -6678,4 +6707,265 @@ body:has(.panes-detail) .navbar { display: none; }
     overflow-y: auto;
   }
   .task-new-wrap .send-menu-scrim { background: rgba(0, 0, 0, 0.45); }
+}
+
+/* ---- Click-to-view files (FilePathLink + FileViewer modal) -------------------- */
+.file-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin: 2px 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.file-link:hover {
+  border-color: var(--accent-dim);
+  text-decoration: underline;
+}
+
+/* "view" affordance in FileChanges rows + FilesPage hits */
+.fc-view {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  cursor: pointer;
+}
+.fc-view:hover { color: var(--accent); border-color: var(--accent-dim); }
+.file-hit-row { display: flex; align-items: center; gap: 4px; }
+.file-hit-row .file-hit-head { flex: 1 1 auto; }
+
+.file-viewer-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 92;
+}
+.file-viewer {
+  position: fixed;
+  top: 7vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(900px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  z-index: 93;
+  overflow: hidden;
+}
+.file-viewer-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.file-viewer-name { font-weight: 600; font-size: 14px; color: var(--text); flex: 0 0 auto; }
+.file-viewer-path {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-viewer-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.file-viewer-btn {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.file-viewer-btn:hover { color: var(--accent); border-color: var(--accent-dim); }
+.file-viewer-body { overflow: auto; padding: 14px 16px; flex: 1; }
+.file-viewer-empty { color: var(--text-dim); font-size: 13px; padding: 8px 0; }
+.file-viewer-error { color: var(--error); font-size: 13px; padding: 8px 0; white-space: pre-wrap; }
+.file-viewer-more {
+  display: block;
+  margin: 12px auto 4px;
+  font-size: 12px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.file-viewer-more:disabled { color: var(--text-dim); cursor: default; }
+
+@media (max-width: 819px) {
+  .file-viewer {
+    top: 0;
+    left: 0;
+    transform: none;
+    width: 100vw;
+    max-height: 100vh;
+    height: 100dvh;
+    border-radius: 0;
+  }
+  .file-viewer-head { flex-wrap: wrap; }
+  .file-viewer-path { flex-basis: 100%; order: 3; }
+}
+
+/* --- Tokens page (tokentracker-cli passthrough) ------------------------------- */
+.tokens-controls { display: flex; gap: 6px; align-items: center; }
+.tokens-controls .chip { cursor: pointer; }
+.tokens-controls .chip.active {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  border-color: transparent;
+}
+.tokens-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 22px;
+  /* Wide tables scroll inside themselves rather than pushing the page sideways. */
+  display: table;
+}
+.tokens-table th,
+.tokens-table td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.tokens-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.tokens-table td.num,
+.tokens-table th.num { text-align: right; font-family: var(--mono); }
+.tokens-table td.mono { font-family: var(--mono); }
+.tokens-table td.dim { color: var(--text-dim); }
+.tokens-table tbody tr:hover { background: var(--bg-elev); }
+.tokens-error {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--error, #ef4444);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.tokens-error-hint { color: var(--text-dim); margin-top: 6px; font-size: 12px; }
+.tokens-foot { color: var(--text-dim); font-size: 12px; margin: 4px 0 24px; }
+@media (max-width: 720px) {
+  .tokens-page .stat-cards { grid-template-columns: repeat(2, 1fr); }
+  .tokens-page { overflow-x: auto; }
+}
+
+/* --- Mermaid diagrams in markdown --------------------------------------------- */
+.mermaid-block {
+  margin: 12px 0;
+  padding: 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  /* A wide flowchart scrolls inside its own box instead of stretching the message. */
+  overflow-x: auto;
+  text-align: center;
+}
+.mermaid-block svg { max-width: 100%; height: auto; }
+.mermaid-pending {
+  margin: 12px 0;
+  padding: 10px 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+.mermaid-failed { margin: 12px 0; }
+.mermaid-failed-msg {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+/* --- Deep-linked file reader (/<absolute path>) -------------------------------- */
+/* Pages pair with .list-wrap for scrolling: body is overflow:hidden by design, so a
+   page that doesn't own a scroll container just gets clipped. These classes only
+   narrow/adjust it. */
+.filepath-page { max-width: 900px; }
+.filepath-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.filepath-titles { display: flex; flex-direction: column; min-width: 0; }
+.filepath-name { font-size: 16px; font-weight: 600; }
+.filepath-full {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.filepath-actions { display: flex; gap: 6px; flex: none; }
+.filepath-error {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--error, #ef4444);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-size: 13px;
+}
+.filepath-hint { color: var(--text-dim); font-size: 12px; margin-top: 6px; }
+
+/* Starred-only toggle in the panes top bar (pairs with the ☆/★ per-window pin). */
+.tasks-starred {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg-elev, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.tasks-starred:hover { color: var(--text); }
+.tasks-starred.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.tasks-empty-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
 }
