@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { openFile } from "../util/openFile";
 import { api } from "../api/client";
 import type { CommitSearchHit, FileActivityGroup, FileHit } from "../api/types";
 import { relativeTime } from "../util/format";
@@ -83,19 +84,28 @@ export default function FilesPage() {
 
       {hits?.map((f) => (
         <div className="file-hit" key={f.file_path}>
-          <button
-            className="file-hit-head"
-            onClick={() => setOpenPath(openPath === f.file_path ? null : f.file_path)}
-          >
-            <span className="file-hit-path">{f.file_path}</span>
-            <span className="file-hit-meta">
-              {f.session_count} session{f.session_count === 1 ? "" : "s"}
-              {" · "}
-              {f.reads ?? 0}r / {f.edits ?? 0}e / {f.writes ?? 0}w
-              {(f.errors ?? 0) > 0 && <span className="loop-errs"> · ⚠ {f.errors}</span>}
-              {f.last_ts && ` · ${relativeTime(f.last_ts)}`}
-            </span>
-          </button>
+          <div className="file-hit-row">
+            <button
+              className="file-hit-head"
+              onClick={() => setOpenPath(openPath === f.file_path ? null : f.file_path)}
+            >
+              <span className="file-hit-path">{f.file_path}</span>
+              <span className="file-hit-meta">
+                {f.session_count} session{f.session_count === 1 ? "" : "s"}
+                {" · "}
+                {f.reads ?? 0}r / {f.edits ?? 0}e / {f.writes ?? 0}w
+                {(f.errors ?? 0) > 0 && <span className="loop-errs"> · ⚠ {f.errors}</span>}
+                {f.last_ts && ` · ${relativeTime(f.last_ts)}`}
+              </span>
+            </button>
+            <button
+              className="fc-view"
+              title={`View ${f.file_path}`}
+              onClick={() => openFile(f.file_path)}
+            >
+              view
+            </button>
+          </div>
 
           {openPath === f.file_path && (
             <div className="file-hit-body">

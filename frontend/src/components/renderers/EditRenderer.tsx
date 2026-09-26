@@ -1,6 +1,7 @@
 import ReactDiffViewer, { DiffMethod } from "react-diff-viewer-continued";
 import type { RendererProps } from "./types";
 import ResultView from "./ResultView";
+import FilePathLink from "../FilePathLink";
 
 interface EditPair {
   old: string;
@@ -25,13 +26,13 @@ function extractEdits(input: Record<string, unknown>): EditPair[] {
 }
 
 export default function EditRenderer({ tool, sessionId }: RendererProps) {
-  const path = tool.input.file_path ? String(tool.input.file_path) : "(unknown)";
+  const path = tool.input.file_path ? String(tool.input.file_path) : undefined;
   const edits = extractEdits(tool.input);
 
   return (
     <div>
       <div className="section-label">File</div>
-      <pre className="code nowrap">{path}</pre>
+      <FilePathLink path={path} />
       {edits.map((e, i) => (
         <div key={i} style={{ margin: "8px 0", fontSize: 12 }}>
           {edits.length > 1 && <div className="section-label">Edit {i + 1}</div>}

@@ -13,6 +13,7 @@ import { summarize } from "./renderers";
 import { classifyUser, toolArg, toolBody, toolTitle } from "./ccInline";
 import { toolStatus } from "../util/toolIndex";
 import { computeToolRuns, type ToolRun } from "../util/toolRuns";
+import { openFile } from "../util/openFile";
 import Markdown from "./Markdown";
 import BookmarkControl from "./BookmarkControl";
 import WelcomeBanner from "./WelcomeBanner";
@@ -768,6 +769,14 @@ function ToolRunRow({
   );
 }
 
+// Tools whose arg is a file path → make the summary arg a click-to-view target.
+const FILE_TOOLS = new Set(["Read", "Edit", "MultiEdit", "Write", "NotebookEdit"]);
+function fileArgPath(tool: ToolUse): string | null {
+  if (!FILE_TOOLS.has(tool.name)) return null;
+  const p = tool.input.file_path ?? tool.input.notebook_path;
+  return p ? String(p) : null;
+}
+
 function ToolLine({
   tool,
   selected,
@@ -784,6 +793,7 @@ function ToolLine({
   const [expanded, setExpanded] = useState(false);
   const status = toolStatus(tool);
   const arg = toolArg(tool);
+  const filePath = fileArgPath(tool);
 
   return (
     <div
@@ -799,7 +809,22 @@ function ToolLine({
       <div className={`cc-tool-head${expanded ? " open" : ""}`}>
         <span className={`cc-bullet status-${status}`}>⏺</span>
         <span className="cc-tool-name">{toolTitle(tool.name)}</span>
-        {arg && <span className="cc-tool-arg">({arg})</span>}
+        {arg &&
+          (filePath ? (
+            <button
+              type="button"
+              className="cc-tool-arg cc-file-link"
+              title={`View ${filePath}`}
+              onClick={(e) => {
+                e.stopPropagation(); // don't toggle the line — just open the viewer
+                openFile(filePath);
+              }}
+            >
+              ({arg})
+            </button>
+          ) : (
+            <span className="cc-tool-arg">({arg})</span>
+          ))}
         {tool.subagent && <span className="subagent-pill">{tool.subagent.agent_type}</span>}
       </div>
       <ResultConnector tool={tool} expanded={expanded} focus={focus} />

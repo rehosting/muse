@@ -2,6 +2,7 @@ import type { RendererProps } from "./types";
 import CodeBlock from "../CodeBlock";
 import Collapsible from "../Collapsible";
 import ResultView from "./ResultView";
+import FilePathLink from "../FilePathLink";
 import { langForPath } from "../../util/highlight";
 
 export default function ReadRenderer({ tool, sessionId }: RendererProps) {
@@ -12,7 +13,7 @@ export default function ReadRenderer({ tool, sessionId }: RendererProps) {
   return (
     <div>
       <div className="section-label">File</div>
-      <pre className="code nowrap">{path ?? "(unknown)"}</pre>
+      <FilePathLink path={path} />
       {tool.result && !tool.result.truncated && content ? (
         <>
           <div className="section-label">Contents</div>
