@@ -17,6 +17,7 @@ from ..config import get_settings
 from ..models import AutopilotConfig, AutopilotSession, AutopilotState
 from ..usage_cache import context_pcts, scan_all
 from . import sessions as live_discovery
+from . import schedule as job_schedule
 from . import snapshot as layout_snapshot
 from . import tmux
 from .resettime import parse_reset_time
@@ -313,6 +314,31 @@ class AutopilotController:
         self.store.save_snapshot(json.dumps(snap), sig)
         self._last_snapshot_write = now
 
+    def _run_due_jobs(self) -> None:
+        """Launch any scheduled job whose occurrence has come due.
+
+        The run is stamped BEFORE the launch so a failing command can't re-fire on
+        every tick — a job that couldn't start is recorded with its error and waits
+        for the next occurrence.
+        """
+        jobs = [j for j in self.store.list_jobs() if j.enabled]
+        if not jobs:
+            return
+        for job in jobs:
+            occurrence = job_schedule.due_at(job)
+            if occurrence is None:
+                continue
+            self.store.mark_job_run(job.id, datetime.now(timezone.utc).isoformat(), "starting")
+            ok, detail = job_schedule.run_job(job)
+            self.store.mark_job_run(
+                job.id, datetime.now(timezone.utc).isoformat(), "ok" if ok else f"failed: {detail}"[:200]
+            )
+            self.store.log(
+                "schedule",
+                "job_run" if ok else "job_failed",
+                f"{job.name or job.id}: {detail or job.command[:80]}",
+            )
+
     def _tick(self) -> None:
         # Session-restore snapshot — independent of arming; never let it break the loop.
         try:
@@ -323,6 +349,12 @@ class AutopilotController:
         # "send this when ready" beats the autopilot on/off switch.
         try:
             self.deliver_queued()
+        except Exception:
+            pass
+        # Clock-driven jobs are likewise independent of arming: "run this at 07:02"
+        # is a standing instruction, not autopilot behaviour.
+        try:
+            self._run_due_jobs()
         except Exception:
             pass
         if not self.store.is_armed() or not self._within_hours():
