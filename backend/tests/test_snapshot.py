@@ -162,12 +162,17 @@ def test_restore_shell_and_unknown_id_and_missing_cwd(monkeypatch, restore_calls
 
 
 class FakeStore:
-    def __init__(self, snapshot=None):
-        self._latest = (snap.topology_sig(snapshot), json.dumps(snapshot)) if snapshot else None
+    def __init__(self, snapshot=None, *older):
+        """Newest-first history ring, like the real store: `snapshot` is the newest row."""
+        rows = [s for s in (snapshot, *older) if s]
+        self._rows = [(snap.topology_sig(s), json.dumps(s)) for s in rows]
         self.entries = []
 
     def latest_snapshot(self):
-        return self._latest
+        return self._rows[0] if self._rows else None
+
+    def recent_snapshots(self, limit=20):
+        return self._rows[:limit]
 
     def log(self, sid, action, detail=""):
         self.entries.append((sid, action, detail))
@@ -209,3 +214,69 @@ def test_restore_endpoint_rebuilds_selected(monkeypatch):
 def test_restore_endpoint_400_without_snapshot(monkeypatch):
     r = _client(FakeStore(None), monkeypatch).post("/api/tmux/restore", json={"groups": ["a"]})
     assert r.status_code == 400
+
+
+# --- codex windows resume with the codex CLI ---------------------------------------
+
+
+def test_build_tags_codex_windows_by_prefixed_id(monkeypatch):
+    panes = [pane("work", 0, "%1", cwd="/a", name="thread"), pane("work", 1, "%2", cmd="codex")]
+    live = [LiveSession(session_id="codex:th-1", pid=10, pane_id="%1", cwd="/a")]
+    monkeypatch.setattr(snap.tmux, "available", lambda: True)
+    monkeypatch.setattr(snap.tmux, "list_layout", lambda: panes)
+    monkeypatch.setattr(snap.live_discovery, "discover", lambda: live)
+
+    wins = snap.build_snapshot()["groups"][0]["windows"]
+    assert [w["kind"] for w in wins] == ["codex", "codex"]  # by id prefix, then by command
+
+
+def test_restore_resumes_codex_thread_with_codex_cli(restore_calls):
+    s = _snap(_g(
+        "g",
+        _w("thread", "codex:th-1", kind="codex", cwd="/a"),
+        _w("legacy", "codex:th-2", kind="claude", cwd="/b"),  # pre-fix snapshot on disk
+        _w("orphan", None, kind="codex", cwd="/c"),           # id not captured
+    ))
+    snap.restore(s, ["g"])
+    cmds = [restore_calls["session"][0][2]] + [c[1] for c in restore_calls["window"]]
+    # A codex thread id fed to `claude --resume` just errors — each resumes with its own CLI.
+    assert cmds == [
+        "codex resume th-1 || codex resume --last",
+        "codex resume th-2 || codex resume --last",
+        "codex resume --last",
+    ]
+
+
+def test_codex_windows_count_toward_the_restore_offer(monkeypatch):
+    monkeypatch.setattr(snap, "_live_index", lambda: (set(), set(), set()))
+    out = snap.annotate_liveness(_snap(_g("a", _w("x", "codex:th-1", kind="codex"), _w("y", "s2"))))
+    assert out["offer"] is True and out["restorable_count"] == 2
+
+
+# --- last-known-good selection across the history ring ----------------------------
+
+
+def test_pick_restorable_prefers_the_richest_capture_over_the_newest():
+    thin = _snap(_g("0", _w("claude", "s-new")))          # first capture after a reboot
+    rich = _snap(_g("main", _w("a", "s1"), _w("b", "s2")), _g("side", _w("c", "s3")))
+    rows = [(snap.topology_sig(s), json.dumps(s)) for s in (thin, rich)]  # newest-first
+    assert snap.pick_restorable(rows) == rich
+
+
+def test_pick_restorable_keeps_newest_on_a_tie_and_skips_junk():
+    newest = _snap(_g("g", _w("a", "s1")))
+    older = _snap(_g("g", _w("a", "s0")))
+    rows = [("sig", "not json"), (snap.topology_sig(newest), json.dumps(newest)),
+            (snap.topology_sig(older), json.dumps(older))]
+    assert snap.pick_restorable(rows) == newest
+    assert snap.pick_restorable([]) is None
+
+
+def test_snapshot_endpoint_restores_topology_behind_a_thin_newest_row(monkeypatch):
+    monkeypatch.setattr(tmux_router.layout_snapshot, "_live_index", lambda: (set(), set(), set()))
+    thin = _snap(_g("0", _w("claude", "s-new")))
+    rich = _snap(_g("main", _w("a", "s1"), _w("b", "s2")))
+    r = _client(FakeStore(thin, rich), monkeypatch).get("/api/tmux/snapshot")
+    body = r.json()
+    assert [g["name"] for g in body["groups"]] == ["main"]
+    assert body["restorable_count"] == 2 and body["offer"] is True

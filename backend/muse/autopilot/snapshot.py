@@ -19,8 +19,22 @@ from . import sessions as live_discovery
 from . import tmux
 
 
+CODEX_PREFIX = "codex:"
+# Window kinds that carry a resumable agent conversation (vs. a plain shell).
+AGENT_KINDS = ("claude", "codex")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _kind_for(sid: str | None, command: str) -> str:
+    """Classify a window from its resolved session id (strong) or foreground command."""
+    if (sid or "").startswith(CODEX_PREFIX) or command == "codex":
+        return "codex"
+    if sid or command == "claude":
+        return "claude"
+    return "shell"
 
 
 def _rep_pane(panes: list[dict], pane_sid: dict[str, str]) -> dict:
@@ -50,29 +64,61 @@ def build_snapshot() -> dict | None:
         grouped.setdefault(p["session_name"], {}).setdefault(p["window_index"], []).append(p)
 
     out_groups: list[dict] = []
-    claude_windows = 0
+    agent_windows = 0
     for sname, windows in grouped.items():
         wins: list[dict] = []
         for widx in sorted(windows):
             rep = _rep_pane(windows[widx], pane_sid)
             sid = pane_sid.get(rep["pane_id"])
-            is_claude = sid is not None or rep["command"] == "claude"
-            if is_claude:
-                claude_windows += 1
+            kind = _kind_for(sid, rep["command"])
+            if kind in AGENT_KINDS:
+                agent_windows += 1
             wins.append(
                 {
                     "window_name": rep["window_name"],
                     "cwd": rep["cwd"],
                     "command": rep["command"],
-                    "kind": "claude" if is_claude else "shell",
+                    "kind": kind,
                     "session_id": sid,
                 }
             )
         out_groups.append({"name": sname, "windows": wins})
 
-    if claude_windows == 0:
+    if agent_windows == 0:
         return None
     return {"ts": _now(), "groups": out_groups}
+
+
+def agent_window_count(snapshot: dict) -> int:
+    """How many resumable agent windows a snapshot holds — its "richness"."""
+    return sum(
+        1 for g in snapshot.get("groups", []) for w in g.get("windows", []) if _is_agent(w)
+    )
+
+
+def _is_agent(w: dict) -> bool:
+    """Agent window in either a fresh capture (kind) or a legacy one (codex: id)."""
+    return w.get("kind") in AGENT_KINDS or (w.get("session_id") or "").startswith(CODEX_PREFIX)
+
+
+def pick_restorable(rows: list[tuple[str, str]]) -> dict | None:
+    """Choose the last-known-good snapshot from the newest-first history ring: the row
+    holding the most agent windows, newest on a tie. The newest row alone is the wrong
+    answer right after a reboot — the capture that lands a minute in sees only the single
+    window you opened by hand, while the pre-reboot topology sits one row back."""
+    best: dict | None = None
+    best_count = -1
+    for _sig, raw in rows:
+        try:
+            snap = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(snap, dict) or not snap.get("groups"):
+            continue
+        count = agent_window_count(snap)
+        if count > best_count:  # strict: ties keep the newer row (rows are newest-first)
+            best, best_count = snap, count
+    return best
 
 
 def topology_sig(snapshot: dict) -> str:
@@ -107,7 +153,7 @@ def _is_live(gname: str, w: dict, live_sids: set[str], live_wins: set[tuple[str,
 def annotate_liveness(snapshot: dict) -> dict:
     """Return the snapshot with a per-window `live` flag plus `offer`/`restorable_count`.
     `offer` is the clean-reboot signal that drives the UI banner: the snapshot has ≥2
-    Claude windows and none of them are currently running."""
+    agent windows and none of them are currently running."""
     live_sids, live_wins, _ = _live_index()
     groups_out: list[dict] = []
     claude_total = claude_live = restorable = 0
@@ -115,7 +161,7 @@ def annotate_liveness(snapshot: dict) -> dict:
         wins = []
         for w in g["windows"]:
             live = _is_live(g["name"], w, live_sids, live_wins)
-            if w["kind"] == "claude":
+            if _is_agent(w):
                 claude_total += 1
                 claude_live += 1 if live else 0
             if not live:
@@ -131,12 +177,18 @@ def annotate_liveness(snapshot: dict) -> dict:
 
 
 def _command_for(w: dict) -> str:
-    """The shell command to launch a restored window. Claude windows resume the exact
-    session (falling back to the latest conversation in the cwd if that fails); a Claude
-    window whose id we couldn't capture continues the latest; shells open bare."""
-    if w["kind"] != "claude":
+    """The shell command to launch a restored window, resuming the exact conversation with
+    the CLI that owns it (falling back to that CLI's latest conversation if the id is
+    gone). Codex threads carry a `codex:` id prefix and must be resumed with `codex
+    resume` — feeding one to `claude --resume` just errors out. Shells open bare."""
+    sid = w.get("session_id") or ""
+    if sid.startswith(CODEX_PREFIX) or w.get("kind") == "codex":
+        thread = sid[len(CODEX_PREFIX) :]
+        if thread:
+            return f"codex resume {shlex.quote(thread)} || codex resume --last"
+        return "codex resume --last"
+    if w.get("kind") != "claude":
         return ""  # empty → tmux opens the default shell
-    sid = w.get("session_id")
     if sid:
         return f"claude --resume {shlex.quote(sid)} || claude --continue"
     return "claude --continue"
