@@ -7054,3 +7054,27 @@ body:has(.panes-detail) .navbar { display: none; }
 .upload-path:hover { border-color: var(--accent-dim); }
 .upload-path code { font-size: 11px; overflow-wrap: anywhere; }
 .upload-copy { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; flex: none; }
+
+/* --- File viewer: soft-wrap mode ---------------------------------------------- */
+/* Off by default on wide screens (code alignment survives), on by default when the
+   viewport is narrow — horizontally scrolling a modal on a phone is miserable.
+   The class lands on the viewer body / page root so it reaches code blocks nested in
+   rendered markdown too, not just the top-level source view. */
+.file-viewer-body.wrap pre,
+.file-viewer-body.wrap pre code,
+.filepath-page.wrap pre,
+.filepath-page.wrap pre code {
+  white-space: pre-wrap;
+  /* Long unbroken tokens (minified JS, base64, a 300-char path) must break too, or
+     wrapping buys nothing. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.file-viewer-body.wrap .codeblock-body,
+.filepath-page.wrap .codeblock-body {
+  overflow-x: hidden;
+}
+/* Wrapped shiki lines keep their own background/padding; stop them stretching. */
+.file-viewer-body.wrap .shiki,
+.filepath-page.wrap .shiki { max-width: 100%; }
+.file-viewer-btn.on { color: var(--accent); border-color: var(--accent-dim); }

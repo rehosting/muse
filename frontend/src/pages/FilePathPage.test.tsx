@@ -1,6 +1,6 @@
 /** Deep-linked file reader: pasting an absolute path onto the host reads the file
  * instead of hitting the router's error page. */
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -73,5 +73,33 @@ describe("FilePathPage", () => {
     mockRead.mockResolvedValue(page("chunk one ", 40000));
     at("/home/luke/big.md");
     await waitFor(() => expect(screen.getByText(/Load more/)).toBeTruthy());
+  });
+});
+
+describe("FilePathPage wrap mode", () => {
+  beforeEach(() => {
+    mockRead.mockReset();
+    localStorage.removeItem("fileWrap");
+  });
+
+  it("toggles wrapping and shares the preference with the modal viewer", async () => {
+    mockRead.mockResolvedValue(page("x".repeat(400)));
+    const { container } = at("/home/luke/app.log");
+    await waitFor(() => expect(mockRead).toHaveBeenCalled());
+    const root = container.firstElementChild!;
+    expect(root.classList.contains("wrap")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Wrap" }));
+    expect(root.classList.contains("wrap")).toBe(true);
+    // same key the modal reads, so the two viewers can't disagree
+    expect(localStorage.getItem("fileWrap")).toBe("1");
+  });
+
+  it("honours a preference set elsewhere", async () => {
+    localStorage.setItem("fileWrap", "1");
+    mockRead.mockResolvedValue(page("hello"));
+    const { container } = at("/home/luke/notes.md");
+    await waitFor(() => expect(mockRead).toHaveBeenCalled());
+    expect(container.firstElementChild!.classList.contains("wrap")).toBe(true);
   });
 });

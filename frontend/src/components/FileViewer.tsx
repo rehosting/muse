@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { copyToClipboard } from "../util/shell";
 import { langForPath } from "../util/highlight";
 import { VIEW_FILE_EVENT } from "../util/openFile";
-import { basename, isMarkdownPath, useFileContent } from "../hooks/useFileContent";
+import { basename, isMarkdownPath, useFileContent, useWrapLines } from "../hooks/useFileContent";
 import Markdown from "./Markdown";
 import CodeBlock from "./CodeBlock";
 
@@ -16,6 +16,7 @@ export default function FileViewer() {
   const [raw, setRaw] = useState(false);
   const [copied, setCopied] = useState(false);
   const { content, size, nextOffset, loading, error, loadMore } = useFileContent(path);
+  const [wrap, toggleWrap] = useWrapLines();
 
   // Open on the global event.
   useEffect(() => {
@@ -70,6 +71,14 @@ export default function FileViewer() {
             {path}
           </span>
           <div className="file-viewer-actions">
+            <button
+              className={`file-viewer-btn${wrap ? " on" : ""}`}
+              onClick={toggleWrap}
+              aria-pressed={wrap}
+              title={wrap ? "Wrap: long lines fold" : "No wrap: long lines scroll"}
+            >
+              Wrap
+            </button>
             {md && (
               <button
                 className="file-viewer-btn"
@@ -87,7 +96,7 @@ export default function FileViewer() {
             </button>
           </div>
         </div>
-        <div className="file-viewer-body">
+        <div className={`file-viewer-body${wrap ? " wrap" : ""}`}>
           {error ? (
             <div className="file-viewer-error">{error}</div>
           ) : !content && loading ? (

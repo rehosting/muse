@@ -69,3 +69,82 @@ describe("FileViewer", () => {
     expect(container.querySelector(".file-viewer")).toBeNull();
   });
 });
+
+describe("FileViewer wrap mode", () => {
+  beforeEach(() => {
+    mockRead.mockReset();
+    localStorage.removeItem("fileWrap");
+  });
+
+  it("folds long lines when wrap is on, and scrolls them when off", async () => {
+    const { container } = render(<FileViewer />);
+    mockRead.mockResolvedValue(page("x".repeat(400), "/p/a.log"));
+    await act(async () => {
+      openFile("/p/a.log");
+    });
+    const body = container.querySelector(".file-viewer-body")!;
+    expect(body.classList.contains("wrap")).toBe(false); // jsdom reports a wide viewport
+
+    fireEvent.click(screen.getByRole("button", { name: "Wrap" }));
+    expect(body.classList.contains("wrap")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Wrap" }));
+    expect(body.classList.contains("wrap")).toBe(false);
+  });
+
+  it("remembers the choice across files and reopens", async () => {
+    const { container, unmount } = render(<FileViewer />);
+    mockRead.mockResolvedValue(page("line", "/p/a.log"));
+    await act(async () => {
+      openFile("/p/a.log");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Wrap" }));
+    expect(localStorage.getItem("fileWrap")).toBe("1");
+    unmount();
+
+    const second = render(<FileViewer />);
+    await act(async () => {
+      openFile("/p/b.log");
+    });
+    expect(second.container.querySelector(".file-viewer-body")!.classList.contains("wrap")).toBe(
+      true,
+    );
+    expect(container).toBeTruthy();
+  });
+
+  it("defaults to wrapping on a phone-width viewport", async () => {
+    const wide = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 420, configurable: true });
+    const { container } = render(<FileViewer />);
+    mockRead.mockResolvedValue(page("line", "/p/a.log"));
+    await act(async () => {
+      openFile("/p/a.log");
+    });
+    expect(container.querySelector(".file-viewer-body")!.classList.contains("wrap")).toBe(true);
+    Object.defineProperty(window, "innerWidth", { value: wide, configurable: true });
+  });
+
+  it("a stored preference beats the viewport default", async () => {
+    localStorage.setItem("fileWrap", "0");
+    const wide = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 420, configurable: true });
+    const { container } = render(<FileViewer />);
+    mockRead.mockResolvedValue(page("line", "/p/a.log"));
+    await act(async () => {
+      openFile("/p/a.log");
+    });
+    expect(container.querySelector(".file-viewer-body")!.classList.contains("wrap")).toBe(false);
+    Object.defineProperty(window, "innerWidth", { value: wide, configurable: true });
+  });
+
+  it("wraps code blocks inside rendered markdown too, not just source view", async () => {
+    const { container } = render(<FileViewer />);
+    mockRead.mockResolvedValue(page("# Hi\n\n```\nlong\n```\n", "/p/plan.md"));
+    await act(async () => {
+      openFile("/p/plan.md");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Wrap" }));
+    // the class sits on the body, which contains the rendered markdown
+    const body = container.querySelector(".file-viewer-body.wrap")!;
+    expect(body.querySelector("pre")).toBeTruthy();
+  });
+});

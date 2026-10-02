@@ -58,3 +58,39 @@ export function useFileContent(path: string | null) {
 
   return { content, size, nextOffset, loading, error, loadMore };
 }
+
+const WRAP_KEY = "fileWrap";
+// Same breakpoint the mobile stylesheet uses.
+const NARROW_PX = 700;
+
+/**
+ * Soft-wrap preference for the file viewers, shared by the modal and the deep-link
+ * page and remembered across files and reloads.
+ *
+ * The default depends on the viewport rather than being a flat false: on a phone a
+ * long line means horizontally scrolling a modal, which is miserable, while on a wide
+ * screen the column alignment of code is usually worth keeping. Once the user picks a
+ * side, that choice wins everywhere — a stored preference is never second-guessed by
+ * the viewport.
+ */
+export function useWrapLines(): [boolean, () => void] {
+  const [wrap, setWrap] = useState(() => {
+    const saved = typeof localStorage !== "undefined" ? localStorage.getItem(WRAP_KEY) : null;
+    if (saved === "1") return true;
+    if (saved === "0") return false;
+    return typeof window !== "undefined" && window.innerWidth <= NARROW_PX;
+  });
+
+  const toggle = useCallback(() => {
+    setWrap((w) => {
+      try {
+        localStorage.setItem(WRAP_KEY, w ? "0" : "1");
+      } catch {
+        // private-mode / quota — the toggle still works for this session
+      }
+      return !w;
+    });
+  }, []);
+
+  return [wrap, toggle];
+}

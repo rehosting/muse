@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import CodeBlock from "../components/CodeBlock";
 import Markdown from "../components/Markdown";
-import { basename, isMarkdownPath, useFileContent } from "../hooks/useFileContent";
+import { basename, isMarkdownPath, useFileContent, useWrapLines } from "../hooks/useFileContent";
 import { copyToClipboard } from "../util/shell";
 import { langForPath } from "../util/highlight";
 
@@ -27,6 +27,7 @@ export default function FilePathPage() {
     looksLikeFile ? path : null,
   );
   const [raw, setRaw] = useState(false);
+  const [wrap, toggleWrap] = useWrapLines();
   const [copied, setCopied] = useState(false);
 
   if (!looksLikeFile) {
@@ -44,7 +45,7 @@ export default function FilePathPage() {
 
   const md = isMarkdownPath(path);
   return (
-    <div className="list-wrap filepath-page">
+    <div className={`list-wrap filepath-page${wrap ? " wrap" : ""}`}>
       <div className="filepath-head">
         <div className="filepath-titles">
           <span className="filepath-name">{basename(path)}</span>
@@ -53,6 +54,14 @@ export default function FilePathPage() {
           </span>
         </div>
         <div className="filepath-actions">
+          <button
+            className={`file-viewer-btn${wrap ? " on" : ""}`}
+            onClick={toggleWrap}
+            aria-pressed={wrap}
+            title={wrap ? "Wrap: long lines fold" : "No wrap: long lines scroll"}
+          >
+            Wrap
+          </button>
           {md && (
             <button className="file-viewer-btn" onClick={() => setRaw((r) => !r)}>
               {raw ? "Rendered" : "Raw"}
