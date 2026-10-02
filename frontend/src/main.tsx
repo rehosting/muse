@@ -18,6 +18,9 @@ import FilesPage from "./pages/FilesPage";
 import ComparePage from "./pages/ComparePage";
 import AskPage from "./pages/AskPage";
 import InsightsPage from "./pages/InsightsPage";
+import TokensPage from "./pages/TokensPage";
+import FilePathPage from "./pages/FilePathPage";
+import UploadsPage from "./pages/UploadsPage";
 import "./styles.css";
 import { initTheme } from "./components/ThemeToggle";
 import { registerSW } from "./registerSW";
@@ -42,10 +45,15 @@ const router = createBrowserRouter([
       { path: "compare", element: <ComparePage /> },
       { path: "stats", element: <StatsPage /> },
       { path: "insights", element: <InsightsPage /> },
+      { path: "tokens", element: <TokensPage /> },
+      { path: "upload", element: <UploadsPage /> },
       { path: "ask", element: <AskPage /> },
       { path: "sessions/:sessionId", element: <SessionViewPage /> },
       { path: "drive/:sessionId", element: <DrivePage /> },
       { path: "panes", element: <PanesPage /> },
+      // Catch-all LAST: an unmatched path is treated as an absolute file path
+      // (so a pasted /home/... URL reads the file) and otherwise says "not found".
+      { path: "*", element: <FilePathPage /> },
     ],
   },
 ]);

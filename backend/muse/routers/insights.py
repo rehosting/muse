@@ -5,13 +5,21 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..models import OutcomesResponse, TimelineResponse
+from .. import runway as runway_mod
+from ..models import OutcomesResponse, RunwayResponse, TimelineResponse
 
 router = APIRouter(prefix="/api", tags=["insights"])
 
 
 def _service(request: Request):
     return request.app.state.service
+
+
+@router.get("/runway", response_model=RunwayResponse)
+def runway(request: Request) -> RunwayResponse:
+    """Budget headroom in the current 5h/weekly windows — cheap enough for the
+    cockpit to poll (TTL-cached over the mtime-cached usage scan)."""
+    return runway_mod.get_runway(_service(request).usage_history)
 
 
 @router.get("/insights", response_model=OutcomesResponse)

@@ -97,59 +97,117 @@ def _clean(line: str) -> str:
     return _BOX_TRAIL_RE.sub("", _BOX_LEAD_RE.sub("", line))
 
 
+# Claude Code renders each option's description on the line(s) beneath it, so a
+# menu's numbered rows are no longer adjacent. How far apart two consecutive
+# numbers may sit and still count as one menu (descriptions wrap; a horizontal
+# rule can sit between the last two rows).
+_MAX_OPTION_GAP = 6
+# Leading box glyphs only, NOT spaces: indentation is what separates a wrapped
+# description from the next option, so it has to survive cleaning.
+_BOX_ONLY_LEAD_RE = re.compile(r"^[│|╭╰┌└┃]+")
+# The question's header chip ("☐ Indentation") sits above the question text.
+_CHIP_RE = re.compile(r"^[☐☑☒◻◼▣]\s*\S")
+
+
+def _indent_of(raw_line: str) -> int:
+    stripped = _BOX_ONLY_LEAD_RE.sub("", raw_line)
+    return len(stripped) - len(stripped.lstrip())
+
+
+def _menu_rows(rows: list[tuple[int, "re.Match"]]) -> Optional[list[tuple[int, "re.Match"]]]:
+    """Walk back from the bottom-most numbered row to `1`, stepping over the
+    description lines between options. Returns the rows in display order, or None
+    when no 1..N run is present."""
+    for end in range(len(rows) - 1, -1, -1):
+        total = int(rows[end][1].group("num"))
+        if total < 2:
+            continue
+        chosen = [rows[end]]
+        want = total - 1
+        k = end - 1
+        while k >= 0 and want >= 1:
+            line_no, m = rows[k]
+            num = int(m.group("num"))
+            if num == want and chosen[-1][0] - line_no <= _MAX_OPTION_GAP:
+                chosen.append(rows[k])
+                want -= 1
+            elif num < want or num > total:
+                break  # numbering jumped — these rows aren't one menu
+            k -= 1
+        if want == 0:
+            return list(reversed(chosen))
+    return None
+
+
+def _description(raw: list[str], lines: list[str], line_no: int, stop: int) -> Optional[str]:
+    """The description Claude Code indents underneath an option row (if any)."""
+    base = _indent_of(raw[line_no])
+    parts = [
+        lines[i].strip()
+        for i in range(line_no + 1, stop)
+        if lines[i].strip() and _indent_of(raw[i]) > base
+    ]
+    return " ".join(parts) or None
+
+
+def _prompt_above(lines: list[str], first_line: int) -> str:
+    """The question text sitting above the first option, skipping the header chip."""
+    prompt_lines: list[str] = []
+    for ln in reversed(lines[:first_line]):
+        text = ln.strip()
+        if not text:
+            if prompt_lines:
+                break
+            continue
+        if _OPTION_RE.match(ln) or _CHIP_RE.match(text):
+            break
+        prompt_lines.append(text)
+        if len(prompt_lines) >= 3:
+            break
+    return " ".join(reversed(prompt_lines)).strip()
+
+
 def parse_permission_menu(pane_text: str) -> Optional[ParsedMenu]:
     """Find a numbered selection dialog in captured pane text, or None.
 
-    Gate (to reject ordinary numbered prose in assistant output): ≥2 options,
-    numbered monotonically from 1, and either a `❯` highlight is present or a
-    prompt line immediately above the block reads like a question.
+    Gate (to reject ordinary numbered prose in assistant output): ≥2 options
+    numbered 1..N, plus the live `❯` cursor. The rows need NOT be adjacent —
+    AskUserQuestion prints a description under each option and a rule above the
+    trailing "Chat about this" row — so we walk the numbers back from the bottom
+    rather than demanding one contiguous block.
     """
     if not pane_text:
         return None
-    lines = [_clean(ln) for ln in pane_text.splitlines()]
+    raw = [_ANSI_RE.sub("", ln) for ln in pane_text.splitlines()]
+    lines = [_clean(ln) for ln in raw]
 
-    # Collect the LAST contiguous numbered block (the live dialog is at the bottom).
-    block: list[tuple[int, re.Match]] = []  # (line_index, match)
-    best: list[tuple[int, re.Match]] = []
+    rows: list[tuple[int, re.Match]] = []
     for i, ln in enumerate(lines):
         m = _OPTION_RE.match(ln)
         if m:
-            block.append((i, m))
-        else:
-            if len(block) >= 2:
-                best = block
-            block = []
-    if len(block) >= 2:
-        best = block
-    if len(best) < 2:
-        return None
-
-    # Numbering must start at 1 and increase by 1 (rejects stray numbered lists).
-    nums = [int(m.group("num")) for _, m in best]
-    if nums != list(range(1, len(nums) + 1)):
+            rows.append((i, m))
+    best = _menu_rows(rows) if rows else None
+    if not best:
         return None
 
     options: list[MenuOption] = []
     current_index: Optional[int] = None
-    for idx, (_, m) in enumerate(best):
+    for idx, (line_no, m) in enumerate(best):
         if m.group("marker") and m.group("marker") in _HIGHLIGHT:
             current_index = idx
-        options.append(MenuOption(id=m.group("num"), label=m.group("label"), kind="menu"))
-
-    # Prompt: the last non-empty, non-option line(s) just above the first option.
-    first_line = best[0][0]
-    prompt_lines: list[str] = []
-    for ln in reversed(lines[:first_line]):
-        if not ln.strip():
-            if prompt_lines:
-                break
-            continue
-        if _OPTION_RE.match(ln):
-            break
-        prompt_lines.append(ln.strip())
-        if len(prompt_lines) >= 2:
-            break
-    prompt = " ".join(reversed(prompt_lines)).strip()
+        stop = (
+            best[idx + 1][0]
+            if idx + 1 < len(best)
+            else min(len(lines), line_no + _MAX_OPTION_GAP)
+        )
+        options.append(
+            MenuOption(
+                id=m.group("num"),
+                label=m.group("label"),
+                description=_description(raw, lines, line_no, stop),
+                kind="menu",
+            )
+        )
 
     # Explicit menus only: require the live `❯` selection cursor. A numbered list
     # in ordinary output (a plan, a list of steps) has no cursor and must NOT be
@@ -159,7 +217,7 @@ def parse_permission_menu(pane_text: str) -> Optional[ParsedMenu]:
 
     return ParsedMenu(
         source="permission",
-        prompt=prompt,
+        prompt=_prompt_above(lines, best[0][0]),
         options=options,
         current_index=current_index,
     )

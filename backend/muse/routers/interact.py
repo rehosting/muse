@@ -38,7 +38,7 @@ def _find_pane(session_id: str) -> str:
     if ls is None:
         raise HTTPException(
             status_code=400,
-            detail="session has no live process (not running, or not a Claude Code session)",
+            detail="session has no live process (not running, or not matched to a live pane)",
         )
     if not ls.pane_id:
         raise HTTPException(

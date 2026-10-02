@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import type { BoardCard } from "../api/types";
 import AiActionButton from "../components/AiActionButton";
+import RunwayBar from "../components/RunwayBar";
 import SessionCard from "../components/board/SessionCard";
 import { useBoardStream } from "../hooks/useBoardStream";
 
@@ -82,6 +83,7 @@ export default function BoardPage() {
 
   return (
     <div className="list-wrap board-wrap">
+      <RunwayBar />
       <div className="board-head">
         <h2 className="list-heading">
           Mission control

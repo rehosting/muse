@@ -639,9 +639,11 @@ class SuggestReply(BaseModel):
 class TmuxPane(BaseModel):
     """One pane in the live tmux topology, for the swipeable mobile panes view."""
 
+    provider: Optional[str] = None  # claude | gemini | codex | opencode | None
     pane_id: str
     session_name: str
     window_index: int
+    window_id: str = ""  # stable window handle (@<n>) — the target for move-window
     window_name: str
     window_active: bool
     pane_index: int
@@ -650,15 +652,22 @@ class TmuxPane(BaseModel):
     cwd: str
     title: str = ""
     session_attached: bool = True  # False => detached session (scratch/background)
+    last_activity: int = 0  # epoch secs of last window activity (most-recent sort)
     muse_session_id: Optional[str] = None  # set if this pane runs a tracked session
     context_pct: Optional[float] = None  # context-window occupancy (tracked sessions)
+    queued: int = 0  # replies queued for delivery when this session's turn ends
     # Attention status for grouping the mobile task list.
     # responded = a live session whose turn ended (a response is ready for you).
     status: Literal["needs_you", "responded", "working", "idle"] = "idle"
     attention: str = ""  # short reason, e.g. "permission prompt", "working"
     # Claude Code's permission mode (Shift+Tab cycles it); None for non-Claude panes.
     mode: Optional[Literal["default", "acceptEdits", "plan", "bypass"]] = None
-    preview: str = ""  # recent captured lines (plain text)
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    # Full screen text is heavy (hundreds of KB across a fleet) — it ships only
+    # when the client asks (?previews=1); the one-line tail always ships for
+    # task-list subtitles. The deck fetches live screens per-pane instead.
+    preview: str = ""  # visible screen (ANSI), only when previews=1
+    preview_tail: str = ""  # last visible line (ANSI stripped, short)
     options: list[PendingOption] = Field(default_factory=list)  # menu detected in buffer
 
 
@@ -666,6 +675,78 @@ class TmuxLayout(BaseModel):
     available: bool = True  # False when tmux isn't installed/running
     panes: list[TmuxPane] = Field(default_factory=list)
     reason: Optional[str] = None
+
+
+class SlashCommand(BaseModel):
+    """One entry in the composer's "/" autocomplete: a Claude Code slash command
+    available to the pane's session (built-in, user-global, or project-local)."""
+
+    name: str  # invoked as "/{name}" — subdir commands are namespaced with ":"
+    description: str = ""
+    source: Literal["builtin", "user", "project"] = "builtin"
+
+
+class QueuedReply(BaseModel):
+    """A user-authored message waiting to be typed into a session's pane the next
+    time that session is genuinely idle (turn ended, no menu pending)."""
+
+    id: int
+    session_id: str
+    text: str
+    created_at: Optional[datetime] = None
+    status: Literal["pending", "sent", "cancelled", "failed"] = "pending"
+    # turn = deliver alone and let it run a full turn; append = glue onto the
+    # previous queued item so both go in one message.
+    mode: Literal["turn", "append"] = "turn"
+    sent_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class QueueView(BaseModel):
+    """A session's queue plus why it isn't delivering right now (so the UI can
+    explain a held reply instead of leaving it silently pending)."""
+
+    items: list[QueuedReply] = []
+    hold_reason: Optional[str] = None
+
+
+class RunwaySession(BaseModel):
+    session_id: str
+    title: str = ""
+    cost_usd: float = 0.0
+
+
+class RunwayWindow(BaseModel):
+    """Spend vs budget for one rate-limit window (5h or weekly)."""
+
+    label: str
+    window_seconds: int
+    anchor: Optional[datetime] = None  # window start
+    anchor_source: str = "estimated"  # "reset" when anchored to an observed reset
+    elapsed_seconds: int = 0
+    remaining_seconds: int = 0
+    cost_usd: float = 0.0
+    budget_usd: Optional[float] = None
+    # Where the budget came from: "configured" (MUSE_LIMIT_*_USD), "observed"
+    # (spend at the last real limit hit), or "none" (subscription plan with no
+    # calibration yet — show spend without a ceiling, never a made-up estimate).
+    budget_source: str = "none"
+    pct_used: Optional[float] = None  # cost/budget, None without a budget
+    pct_elapsed: float = 0.0  # time progress through the window
+
+
+class RunwayResponse(BaseModel):
+    """How much headroom is left before hitting the plan's usage limits — the
+    fleet-driving question ('can I keep all these sessions running?')."""
+
+    generated_at: datetime
+    plan_label: Optional[str] = None
+    five_hour: RunwayWindow
+    week: RunwayWindow
+    burn_usd_per_hour: float = 0.0  # trailing burn rate (last 30 min, annualized to 1h)
+    projected_exhaust_at: Optional[datetime] = None  # when the 5h budget runs out at this burn
+    exhaust_before_reset: bool = False  # True => you'll hit the limit before the window resets
+    top_sessions: list[RunwaySession] = Field(default_factory=list)  # burners this 5h window
 
 
 class Bookmark(BaseModel):
@@ -679,6 +760,7 @@ class Annotations(BaseModel):
     session_id: str
     custom_title: Optional[str] = None
     bookmarks: list[Bookmark] = Field(default_factory=list)
+
 
 
 # --- Investigations: AI/user-authored markup documents that reference sessions --
@@ -771,6 +853,63 @@ class LiveSession(BaseModel):
 
 ContextAction = Literal["none", "compact", "clear", "message", "stop"]
 IdleMode = Literal["message", "suggestion", "ai"]
+
+
+class ScheduledJob(BaseModel):
+    """A job muse launches on a clock (see autopilot/schedule.py).
+
+    Either `at_time` + `days` (daily at a local wall-clock time) or `every_minutes`
+    (repeating interval). `command` is the shell line the new tmux window runs."""
+
+    id: int = 0
+    name: str = ""
+    enabled: bool = True
+    at_time: str = ""  # "HH:MM" local; ignored when every_minutes > 0
+    days: str = "0,1,2,3,4,5,6"  # weekday numbers, Mon=0
+    every_minutes: int = 0  # > 0 selects the interval shape
+    command: str = ""
+    cwd: str = ""
+    group_name: str = ""  # tmux session to launch into ("" → "jobs")
+    window_name: str = ""
+    last_run_at: Optional[str] = None
+    last_status: str = ""
+    next_run_at: Optional[str] = None  # derived for display, not stored
+
+
+class ScheduledJobInput(BaseModel):
+    """Create/update payload. Everything but `command` has a usable default."""
+
+    name: str = ""
+    enabled: bool = True
+    at_time: str = ""
+    days: str = "0,1,2,3,4,5,6"
+    every_minutes: int = 0
+    command: str
+    cwd: str = ""
+    group_name: str = ""
+    window_name: str = ""
+
+
+class UploadedFile(BaseModel):
+    """One file dropped into muse's temp upload dir. `path` is the deliverable — it is
+    what gets pasted into an agent session."""
+
+    name: str
+    path: str
+    size: int
+    mtime: str
+
+
+class UploadList(BaseModel):
+    """The drop dir's contents plus the limits that govern it, so the page can state
+    them instead of discovering them from a rejection."""
+
+    root: str
+    ttl_hours: int
+    max_mb: int
+    files: list[UploadedFile] = Field(default_factory=list)
+    # Per-file failures from a partial batch; the files that did land are in `files`.
+    errors: list[str] = Field(default_factory=list)
 
 
 class AutopilotConfig(BaseModel):

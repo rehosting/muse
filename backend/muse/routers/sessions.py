@@ -160,6 +160,23 @@ def file_activity(path: str, request: Request) -> list[dict]:
     return _service(request).file_activity(path)
 
 
+@router.get("/file")
+def read_file(
+    request: Request,
+    path: str = Query(..., description="absolute path of the file to view"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(40000, ge=1, le=40000),
+) -> dict:
+    """Live on-disk bytes of one referenced/changed file (click-to-view). Guarded to the
+    indexed project dirs + ~/.claude; a path outside them is 403, a missing file/dir 404."""
+    result = _service(request).read_file(path, offset, limit)
+    err = result.get("error")
+    if err:
+        outside = "outside" in err
+        raise HTTPException(status_code=403 if outside else 404, detail=err)
+    return result
+
+
 @router.get("/sessions/{session_id}/related")
 def get_related_sessions(session_id: str, request: Request) -> list[dict]:
     """Related sessions: same project / shared edited files / temporal adjacency."""

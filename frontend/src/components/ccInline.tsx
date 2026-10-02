@@ -196,9 +196,12 @@ export function classifyUser(raw: string): UserRender {
     const text = out[1].trim();
     return text ? { kind: "stdout", text } : { kind: "hidden" };
   }
-  // Drop harness-injected wrappers the CLI never shows in scrollback.
+  // Drop harness-injected wrappers the CLI never shows in scrollback — these ride
+  // in on user-role turns but aren't things you typed (system reminders, the local
+  // command caveat, and background task-completion notifications).
   let rest = strip(raw, "<system-reminder>", "</system-reminder>");
   rest = strip(rest, "<local-command-caveat>", "</local-command-caveat>");
+  rest = strip(rest, "<task-notification>", "</task-notification>");
   rest = rest.trim();
   if (!rest) return { kind: "hidden" };
   return { kind: "text", text: rest };

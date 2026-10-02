@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { FileChange, FileOp, FileOpKind } from "../api/types";
+import { openFile } from "../util/openFile";
 
 const OP_GLYPH: Record<FileOpKind, string> = {
   read: "○",
@@ -64,6 +65,17 @@ export default function FileChanges({ files, selectedToolId, onSelectOp }: Props
                 {f.write_count > 0 && <span className="fc-b write">W{f.write_count}</span>}
                 {f.error_count > 0 && <span className="fc-b err">⚠{f.error_count}</span>}
               </span>
+              <button
+                type="button"
+                className="fc-view"
+                title={`View ${f.path}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openFile(f.path);
+                }}
+              >
+                view
+              </button>
             </div>
             {isOpen(f.path) && (
               <div className="fc-ops">

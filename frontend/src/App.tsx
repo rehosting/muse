@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import CommandPalette from "./components/CommandPalette";
 import LaunchModal from "./components/LaunchModal";
+import FileViewer from "./components/FileViewer";
 import LoginGate from "./components/LoginGate";
 import ThemeToggle from "./components/ThemeToggle";
 import { useKeyboardInset } from "./hooks/useKeyboardInset";
@@ -46,6 +47,12 @@ export default function App() {
         <NavLink to="/insights" className="nav-link">
           Insights
         </NavLink>
+        <NavLink to="/tokens" className="nav-link">
+          Tokens
+        </NavLink>
+        <NavLink to="/upload" className="nav-link">
+          Upload
+        </NavLink>
         <button
           className="nav-search"
           onClick={() => window.dispatchEvent(new Event("muse:search"))}
@@ -60,6 +67,7 @@ export default function App() {
       </main>
       <CommandPalette />
       <LaunchModal />
+      <FileViewer />
       <LoginGate />
     </div>
   );

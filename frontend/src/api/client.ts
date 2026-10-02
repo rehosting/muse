@@ -24,11 +24,20 @@ import type {
   NotifyConfig,
   OpenLoop,
   NotifyResult,
+  PaneScreen,
+  SlashCommand,
   PendingOptions,
   PushSubscriptionInfo,
+  QueuedReply,
+  QueueView,
+  RunwayResponse,
+  HooksStatus,
   TmuxLayout,
   Pack,
+  LayoutSnapshot,
   PersistedOutput,
+  FileView,
+  Profile,
   ReentryBrief,
   RelatedSession,
   SearchResponse,
@@ -40,6 +49,8 @@ import type {
   StatsResponse,
   Thread,
   ThreadWindowOpts,
+  TokenUsage,
+  UploadList,
 } from "./types";
 
 function notifyAuthRequired(status: number): void {
@@ -48,11 +59,23 @@ function notifyAuthRequired(status: number): void {
   if (status === 401) window.dispatchEvent(new Event("muse:auth-required"));
 }
 
+// FastAPI reports errors as `{ "detail": "..." }`; prefer that human message over the
+// bare status line so config/validation errors (e.g. a broken profiles.toml) surface.
+async function errorMessage(res: Response, url: string): Promise<string> {
+  try {
+    const body = (await res.clone().json()) as { detail?: unknown };
+    if (typeof body?.detail === "string" && body.detail) return body.detail;
+  } catch {
+    /* not JSON — fall through to the status line */
+  }
+  return `${res.status} ${res.statusText} for ${url}`;
+}
+
 async function getJSON<T>(url: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal });
   if (!res.ok) {
     notifyAuthRequired(res.status);
-    throw new Error(`${res.status} ${res.statusText} for ${url}`);
+    throw new Error(await errorMessage(res, url));
   }
   return res.json() as Promise<T>;
 }
@@ -65,7 +88,7 @@ async function sendJSON<T>(method: string, url: string, body?: unknown): Promise
   });
   if (!res.ok) {
     notifyAuthRequired(res.status);
-    throw new Error(`${res.status} ${res.statusText} for ${url}`);
+    throw new Error(await errorMessage(res, url));
   }
   return res.json() as Promise<T>;
 }
@@ -115,6 +138,30 @@ export const api = {
     getJSON<PersistedOutput>(
       `/api/sessions/${sessionId}/tool-results/${cacheId}?offset=${offset}`,
     ),
+
+  // Live on-disk bytes of a referenced/changed file (click-to-view). Guarded server-side
+  // to the indexed project dirs + ~/.claude; paginated (next_offset when more remains).
+  readFile: (path: string, offset = 0) =>
+    getJSON<FileView>(`/api/file?path=${encodeURIComponent(path)}&offset=${offset}`),
+
+  // --- temporary uploads (drop a file here, hand its path to an agent) ---
+  listUploads: (signal?: AbortSignal) => getJSON<UploadList>("/api/uploads", signal),
+
+  /** Multipart, not JSON — a phone photo is megabytes and base64 would inflate it by a
+   * third. No Content-Type header: the browser must set its own multipart boundary. */
+  uploadFiles: async (files: File[]): Promise<UploadList> => {
+    const form = new FormData();
+    for (const f of files) form.append("files", f, f.name);
+    const res = await fetch("/api/uploads", { method: "POST", body: form });
+    if (!res.ok) {
+      notifyAuthRequired(res.status);
+      throw new Error(await errorMessage(res, "/api/uploads"));
+    }
+    return res.json() as Promise<UploadList>;
+  },
+
+  deleteUpload: (name: string) =>
+    sendJSON<{ ok: boolean }>("DELETE", `/api/uploads/${encodeURIComponent(name)}`),
 
   streamUrl: (sessionId: string) => `/api/sessions/${sessionId}/stream`,
 
@@ -307,6 +354,32 @@ export const api = {
   sendSessionKey: (sessionId: string, key: "escape" | "enter" | "accept") =>
     sendJSON<{ ok: boolean }>("POST", `/api/sessions/${sessionId}/keys`, { key }),
 
+  // --- queued replies (deliver when the turn actually ends) ---
+  getQueue: (sessionId: string, signal?: AbortSignal) =>
+    getJSON<QueueView>(`/api/sessions/${sessionId}/queue`, signal),
+
+  queueReply: (sessionId: string, text: string, mode: "turn" | "append" = "turn") =>
+    sendJSON<QueuedReply>("POST", `/api/sessions/${sessionId}/queue`, { text, mode }),
+
+  // User override: deliver the next queued batch now (skips wait-for-idle).
+  sendQueuedNow: (sessionId: string) =>
+    sendJSON<{ ok: boolean; sent: number[] }>(
+      "POST",
+      `/api/sessions/${sessionId}/queue/send-now`,
+      {},
+    ),
+
+  setQueuedReplyMode: (sessionId: string, qid: number, mode: "turn" | "append") =>
+    sendJSON<{ ok: boolean }>("POST", `/api/sessions/${sessionId}/queue/${qid}/mode`, { mode }),
+
+  cancelQueuedReply: (sessionId: string, qid: number) =>
+    sendJSON<{ ok: boolean }>("DELETE", `/api/sessions/${sessionId}/queue/${qid}`),
+
+  // --- budget runway + hook telemetry ---
+  getRunway: (signal?: AbortSignal) => getJSON<RunwayResponse>("/api/runway", signal),
+
+  getHooksStatus: () => getJSON<HooksStatus>("/api/hooks/status"),
+
   getSessionSends: (sessionId: string, limit = 20) =>
     getJSON<{ ts: string; action: string; detail: string }[]>(
       `/api/sessions/${sessionId}/sends?limit=${limit}`,
@@ -318,11 +391,31 @@ export const api = {
     ),
 
   // --- tmux topology (mobile panes view) ---
-  getTmuxLayout: (signal?: AbortSignal) =>
-    getJSON<TmuxLayout>("/api/tmux/layout", signal),
+  // previews=false omits per-pane screen text (~250KB across a fleet) — the
+  // task list polls that shape; the deck uses getPaneScreen for live terminals.
+  /** Token usage from the tokentracker CLI. `refresh` re-parses transcripts (~10s) —
+   * user-initiated only; the default read comes from the tracker's own cache. */
+  getTokenUsage: (days = 7, refresh = false, signal?: AbortSignal) =>
+    getJSON<TokenUsage>(`/api/tokens?days=${days}&refresh=${refresh ? 1 : 0}`, signal),
+
+  getTmuxLayout: (previews = true, signal?: AbortSignal) =>
+    getJSON<TmuxLayout>(`/api/tmux/layout?previews=${previews ? 1 : 0}`, signal),
+
+  getPaneScreen: (paneId: string, signal?: AbortSignal) =>
+    getJSON<PaneScreen>(
+      `/api/tmux/panes/${encodeURIComponent(paneId)}/screen`,
+      signal,
+    ),
 
   // Pane ids look like "%12" — the leading % is URL-encoding's escape char, so it
   // MUST be encoded (→ "%2512") or the server decodes it into a different/invalid id.
+  // Slash commands available to a pane's session, for the composer's "/" menu.
+  getPaneCommands: (paneId: string, signal?: AbortSignal) =>
+    getJSON<SlashCommand[]>(
+      `/api/tmux/panes/${encodeURIComponent(paneId)}/commands`,
+      signal,
+    ),
+
   sendToPane: (paneId: string, text: string, submit = true) =>
     sendJSON<{ ok: boolean }>(
       "POST",
@@ -347,6 +440,84 @@ export const api = {
 
   newPaneSession: (cwd?: string) =>
     sendJSON<{ ok: boolean; pane_id: string }>("POST", "/api/tmux/new", { cwd: cwd ?? null }),
+
+  // --- launch profiles (~/.muse/profiles.toml) ---
+  listProfiles: () => getJSON<Profile[]>("/api/tmux/profiles"),
+
+  launchProfile: (name: string, values: Record<string, string>, session?: string | null) =>
+    sendJSON<{ ok: boolean; pane_id: string }>(
+      "POST",
+      `/api/tmux/profiles/${encodeURIComponent(name)}/launch`,
+      { values, session: session ?? null },
+    ),
+
+  launchCodexFromSession: (body: {
+    source_session_id: string;
+    cwd: string;
+    session?: string | null;
+    window_name?: string;
+    prompt?: string;
+  }) =>
+    sendJSON<{ ok: boolean; pane_id: string; pack_id: string | null }>(
+      "POST",
+      "/api/tmux/codex/launch",
+      body,
+    ),
+
+  // --- session restore (rebuild the tmux layout after a reboot) ---
+  getTmuxSnapshot: () => getJSON<LayoutSnapshot>("/api/tmux/snapshot"),
+
+  restoreTmuxLayout: (groups: string[]) =>
+    sendJSON<{ ok: boolean; restored: number; skipped: number; groups: string[] }>(
+      "POST",
+      "/api/tmux/restore",
+      { groups },
+    ),
+
+  // --- groups (tmux sessions) ---
+  // Organize panes by moving whole windows between tmux sessions. Window ids look
+  // like "@12" — @ is encoding-safe, but encode anyway to match the pane-id pattern.
+  createTmuxSession: (name: string) =>
+    sendJSON<{ ok: boolean; session: string }>("POST", "/api/tmux/sessions", { name }),
+
+  renameTmuxSession: (name: string, next: string) =>
+    sendJSON<{ ok: boolean; session: string }>(
+      "POST",
+      `/api/tmux/sessions/${encodeURIComponent(name)}/rename`,
+      { name: next },
+    ),
+
+  deleteTmuxSession: (name: string) =>
+    sendJSON<{ ok: boolean }>("DELETE", `/api/tmux/sessions/${encodeURIComponent(name)}`),
+
+  moveTmuxWindow: (windowId: string, session: string) =>
+    sendJSON<{ ok: boolean; window_id: string; session: string }>(
+      "POST",
+      `/api/tmux/windows/${encodeURIComponent(windowId)}/move`,
+      { session },
+    ),
+
+  renameTmuxWindow: (windowId: string, name: string) =>
+    sendJSON<{ ok: boolean; window_id: string; name: string }>(
+      "POST",
+      `/api/tmux/windows/${encodeURIComponent(windowId)}/rename`,
+      { name },
+    ),
+
+  // Removing a session: preview the profile cleanup (if any), then close the window.
+  getWindowCleanup: (windowId: string) =>
+    getJSON<{
+      window_name: string;
+      cwd: string;
+      cleanup: { profile: string; command: string } | null;
+    }>(`/api/tmux/windows/${encodeURIComponent(windowId)}/cleanup`),
+
+  closeTmuxWindow: (windowId: string, cleanup: boolean) =>
+    sendJSON<{ ok: boolean; cleanup_ran: boolean; cleanup_ok: boolean; cleanup_output: string }>(
+      "POST",
+      `/api/tmux/windows/${encodeURIComponent(windowId)}/close`,
+      { cleanup },
+    ),
 
   // --- web push notifications ---
   getVapidKey: () => getJSON<{ public_key: string }>("/api/notify/vapid-key"),
