@@ -1070,3 +1070,21 @@ export interface TokenUsage {
   sessions: TokenSessionRow[];
   provenance: { privacy?: string; source?: string; methodology?: string };
 }
+
+/** One file in muse's temporary drop dir. `path` is the point — it's what gets pasted
+ * into an agent session; the bytes are never served back out over HTTP. */
+export interface UploadedFile {
+  name: string;
+  path: string;
+  size: number;
+  mtime: string;
+}
+
+export interface UploadList {
+  root: string;
+  ttl_hours: number;
+  max_mb: number;
+  files: UploadedFile[];
+  /** Per-file failures from a partial batch; whatever landed is still in `files`. */
+  errors: string[];
+}

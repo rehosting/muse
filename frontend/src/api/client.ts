@@ -50,6 +50,7 @@ import type {
   Thread,
   ThreadWindowOpts,
   TokenUsage,
+  UploadList,
 } from "./types";
 
 function notifyAuthRequired(status: number): void {
@@ -142,6 +143,25 @@ export const api = {
   // to the indexed project dirs + ~/.claude; paginated (next_offset when more remains).
   readFile: (path: string, offset = 0) =>
     getJSON<FileView>(`/api/file?path=${encodeURIComponent(path)}&offset=${offset}`),
+
+  // --- temporary uploads (drop a file here, hand its path to an agent) ---
+  listUploads: (signal?: AbortSignal) => getJSON<UploadList>("/api/uploads", signal),
+
+  /** Multipart, not JSON — a phone photo is megabytes and base64 would inflate it by a
+   * third. No Content-Type header: the browser must set its own multipart boundary. */
+  uploadFiles: async (files: File[]): Promise<UploadList> => {
+    const form = new FormData();
+    for (const f of files) form.append("files", f, f.name);
+    const res = await fetch("/api/uploads", { method: "POST", body: form });
+    if (!res.ok) {
+      notifyAuthRequired(res.status);
+      throw new Error(await errorMessage(res, "/api/uploads"));
+    }
+    return res.json() as Promise<UploadList>;
+  },
+
+  deleteUpload: (name: string) =>
+    sendJSON<{ ok: boolean }>("DELETE", `/api/uploads/${encodeURIComponent(name)}`),
 
   streamUrl: (sessionId: string) => `/api/sessions/${sessionId}/stream`,
 

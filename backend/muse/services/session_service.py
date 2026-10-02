@@ -1678,6 +1678,11 @@ class SessionService:
         scratch = Path(tempfile.gettempdir()) / f"claude-{os.getuid()}"
         if scratch.is_dir():
             roots.append(scratch)
+        # The temp upload drop: a file the user just handed to an agent should be
+        # viewable from the same link they pasted.
+        drop = get_settings().upload_dir
+        if drop.is_dir():
+            roots.append(drop)
         return roots
 
     def read_file(self, path: str, offset: int = 0, limit: int = 40000) -> dict:

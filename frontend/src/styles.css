@@ -6969,3 +6969,88 @@ body:has(.panes-detail) .navbar { display: none; }
   cursor: pointer;
   text-decoration: underline;
 }
+
+/* --- Upload: temporary file drop (phone → /tmp on this machine) ---------------- */
+.uploads-limits { font-size: 12px; color: var(--text-dim); }
+.uploads-root {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.uploads-root code { font-size: 11px; }
+.upload-drop {
+  margin: 10px 0 12px;
+  padding: 18px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  text-align: center;
+}
+.upload-drop.dragging { border-color: var(--accent); background: var(--bg-hover, var(--bg-elev)); }
+/* The real input stays in the DOM (tests and keyboard users need it) but the visible
+   control is the button, which is big enough to hit with a thumb. */
+.upload-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.upload-pick {
+  padding: 10px 18px;
+  font-size: 14px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--accent);
+  cursor: pointer;
+}
+.upload-pick:disabled { opacity: 0.6; cursor: default; }
+.upload-hint { margin: 10px 0 0; font-size: 12px; color: var(--text-dim); }
+.upload-error {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger, #c0392b);
+  border-radius: 6px;
+  color: var(--text-dim);
+}
+.upload-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.upload-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "meta actions" "path path";
+  gap: 6px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+}
+.upload-meta { grid-area: meta; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.upload-name { font-size: 13px; overflow-wrap: anywhere; }
+.upload-sub { font-size: 11px; color: var(--text-dim); }
+.upload-actions { grid-area: actions; display: flex; gap: 6px; align-items: start; }
+.upload-del {
+  padding: 2px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.upload-del:hover { color: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
+/* The path row is the whole point of the page: full width, tappable, copies on tap. */
+.upload-path {
+  grid-area: path;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.upload-path:hover { border-color: var(--accent-dim); }
+.upload-path code { font-size: 11px; overflow-wrap: anywhere; }
+.upload-copy { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; flex: none; }

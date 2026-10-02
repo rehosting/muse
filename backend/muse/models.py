@@ -890,6 +890,28 @@ class ScheduledJobInput(BaseModel):
     window_name: str = ""
 
 
+class UploadedFile(BaseModel):
+    """One file dropped into muse's temp upload dir. `path` is the deliverable — it is
+    what gets pasted into an agent session."""
+
+    name: str
+    path: str
+    size: int
+    mtime: str
+
+
+class UploadList(BaseModel):
+    """The drop dir's contents plus the limits that govern it, so the page can state
+    them instead of discovering them from a rejection."""
+
+    root: str
+    ttl_hours: int
+    max_mb: int
+    files: list[UploadedFile] = Field(default_factory=list)
+    # Per-file failures from a partial batch; the files that did land are in `files`.
+    errors: list[str] = Field(default_factory=list)
+
+
 class AutopilotConfig(BaseModel):
     session_id: str
     enabled: bool = False

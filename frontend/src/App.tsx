@@ -50,6 +50,9 @@ export default function App() {
         <NavLink to="/tokens" className="nav-link">
           Tokens
         </NavLink>
+        <NavLink to="/upload" className="nav-link">
+          Upload
+        </NavLink>
         <button
           className="nav-search"
           onClick={() => window.dispatchEvent(new Event("muse:search"))}

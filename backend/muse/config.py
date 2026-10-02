@@ -7,6 +7,7 @@ is CLAUDE_DIR, which defaults to ~/.claude.
 from __future__ import annotations
 
 import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -82,6 +83,18 @@ class Settings:
         self.ai_daily_budget_usd: float = float(
             os.environ.get("MUSE_AI_DAILY_BUDGET_USD", "2.0")
         )
+
+        # --- temporary uploads (browser drop → a path you can hand to an agent) ---
+        # Deliberately under /tmp, not ~/.muse: these are hand-off scraps, and the OS
+        # clearing them on reboot is the lifetime we want. uid-scoped so two users on
+        # one box never share a drop dir.
+        self.upload_dir: Path = Path(
+            os.environ.get("MUSE_UPLOAD_DIR", "")
+            or str(Path(tempfile.gettempdir()) / f"muse-uploads-{os.getuid()}")
+        ).expanduser()
+        self.upload_max_mb: int = int(os.environ.get("MUSE_UPLOAD_MAX_MB", "64"))
+        # Files older than this are swept whenever the dir is listed. 0 disables.
+        self.upload_ttl_hours: int = int(os.environ.get("MUSE_UPLOAD_TTL_HOURS", "48"))
 
         # --- remote access -------------------------------------------------------
         # Bearer/cookie token for non-loopback clients. Sourced from the env or
